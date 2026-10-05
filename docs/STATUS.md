@@ -11,6 +11,7 @@ Last verified: 2026-10-05 (Asia/Taipei)
 - `PUBLIC_BASE_URL` is configured.
 - DM automation remains disabled.
 - Invalid scheduler and Telegram webhook secrets both receive HTTP 403, and the deployed revision has no error-level log entries from the verification window.
+- The runtime service account has a database-conditioned Datastore role for `thread-opportunity` and Secret Manager access only on the six named Kairos secrets.
 
 ## Activation gates
 
