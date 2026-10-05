@@ -55,7 +55,15 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
     async def lifespan(_: FastAPI):
         yield
 
-    api = FastAPI(title="Kairos", version="0.1.0", lifespan=lifespan)
+    expose_development_docs = settings.app_env != "production"
+    api = FastAPI(
+        title="Kairos",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if expose_development_docs else None,
+        redoc_url="/redoc" if expose_development_docs else None,
+        openapi_url="/openapi.json" if expose_development_docs else None,
+    )
     api.state.settings = settings
     api.state.workflow = active_workflow
 

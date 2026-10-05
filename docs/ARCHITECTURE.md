@@ -31,6 +31,7 @@ Every Telegram button is also checked against the candidate's current state and 
 - Threads search uses the official API and a scoped access token.
 - Telegram is owner-only. The webhook checks Telegram's secret-token header and the configured chat ID.
 - Scheduler calls require a separate secret header.
+- Swagger, ReDoc, and OpenAPI schema routes are disabled when `APP_ENV=production`.
 - The named Firestore database `thread-opportunity` is the durable source of truth. Conditional IAM prevents the runtime from reading the project's Chronos database. Cloud Run's local filesystem is not used for state.
 - Browser session material belongs in Secret Manager and must never be committed or logged.
 - The UI sender is disabled by default. It requires a controlled live selector check after every material Threads UI change.

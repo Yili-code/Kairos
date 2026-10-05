@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from fastapi import HTTPException
 
@@ -127,3 +129,21 @@ def test_scheduler_fails_closed_without_threads_token(monkeypatch) -> None:
 
     assert error.value.status_code == 503
     assert error.value.detail == "Threads search is not configured"
+
+
+def test_production_disables_interactive_api_documentation(monkeypatch) -> None:
+    production = replace(
+        settings(monkeypatch),
+        app_env="production",
+        public_base_url="https://kairos.example.test",
+        telegram_bot_token="telegram-token",
+        threads_access_token="threads-token",
+        gemini_api_key="gemini-key",
+        google_cloud_project="test-project",
+    )
+
+    app = create_app(production, FakeWorkflow())
+
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
