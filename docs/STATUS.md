@@ -7,7 +7,7 @@ Last verified: 2026-10-05 (Asia/Taipei)
 - Cloud Run revision `kairos-00003-t4z` serves 100% of traffic and `/health` returns `ok`.
 - Firestore database `thread-opportunity` is reachable and currently contains zero opportunity documents.
 - The Free Tier Gemini key successfully produced a schema-valid Kairos assessment and draft through the `gemini-3.5-flash` to `gemini-3.5-flash-lite` fallback chain.
-- Twenty local tests pass.
+- Twenty-five local tests pass, including direct FastAPI route-boundary checks.
 - `PUBLIC_BASE_URL` is configured.
 - DM automation remains disabled.
 
