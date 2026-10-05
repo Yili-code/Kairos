@@ -79,3 +79,23 @@ def test_transient_primary_failure_uses_fallback_model() -> None:
 
     assert result["fit_score"] == 80
     assert calls == ["primary", "fallback"]
+
+
+def test_explicit_interest_answer_overrides_model_inference() -> None:
+    class FakeGeminiClient(GeminiClient):
+        async def _assess_with_model(self, model, payload):
+            return {
+                "fit_score": 80,
+                "interest_score": 2,
+                "assessment": "Good fit.",
+                "language": "en",
+                "draft_message": "Hello.",
+            }
+
+    client = FakeGeminiClient("test-key", "primary")
+    candidate = Candidate("1", "builder", "post", "url", "", "hackathon")
+    candidate.answers["interest"] = "5"
+
+    result = run_immediate(client.assess_and_draft(candidate))
+
+    assert result["interest_score"] == 5

@@ -13,6 +13,7 @@ This is intentionally not an autonomous outreach bot. Discovery can run unattend
 - English and Traditional Chinese discovery terms are enabled by default.
 - Threads discovery explicitly uses Meta's `RECENT` keyword-search mode and requires `threads_basic` plus `threads_keyword_search` approval.
 - Term-time target: 13–16 hours per week.
+- From the 2027 winter break onward, winter and summer breaks may allow more time; exact weekly hours remain unconfirmed and must not be promised.
 - Remote preferred; onsite work in Taipei or Keelung is acceptable; overseas and fixed cross-time-zone meetings are acceptable.
 - Unpaid trials are limited to 5–8 total hours, cannot be used directly in a commercial product, and require explicit IP terms.
 - If Threads DM is unavailable, the workflow stops. It never posts a public reply as a fallback.

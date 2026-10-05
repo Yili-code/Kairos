@@ -58,7 +58,11 @@ class GeminiClient:
         last_transient_error: GeminiTransientError | None = None
         for model in models:
             try:
-                return await self._assess_with_model(model, payload)
+                result = await self._assess_with_model(model, payload)
+                explicit_interest = candidate.answers.get("interest", "")
+                if explicit_interest in {"1", "2", "3", "4", "5"}:
+                    result["interest_score"] = int(explicit_interest)
+                return result
             except GeminiTransientError as exc:
                 last_transient_error = exc
                 continue
@@ -121,6 +125,8 @@ Rules:
 - InnoServe 2026 is ongoing, not completed and not an award.
 - Prefer concise natural language matching the source post's language.
 - Do not promise delivery, compensation terms, or availability beyond the stated limits.
+- Higher winter- or summer-break availability has no confirmed weekly-hour figure; ask instead of estimating it.
+- Treat the explicit YILI_ANSWERS interest value as authoritative.
 - The message must be 70-140 English words or a similarly concise length in Chinese.
 - Ask one concrete question that helps verify scope, team, time, or compensation.
 

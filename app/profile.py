@@ -16,8 +16,11 @@ PROFILE = {
     "priorities": ["resume value", "competition outcome", "income"],
     "opportunity_priority": ["hackathon", "internship", "paid project"],
     "term_hours_per_week": {"min": 13, "max": 16},
-    "break_availability_from": "2027-01",
-    "break_hours_per_week": {"min": 32, "max": 40},
+    "break_availability": {
+        "higher_availability_from": "2027-01",
+        "periods": ["winter break", "summer break"],
+        "hours_per_week": "requires confirmation",
+    },
     "unpaid_trial": {
         "max_hours_min": 5,
         "max_hours_max": 8,
