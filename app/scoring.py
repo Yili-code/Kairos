@@ -61,8 +61,14 @@ class ScoreResult:
     risks: list[str]
 
 
+def _has_term(text: str, term: str) -> bool:
+    if re.search(r"[a-z0-9]", term):
+        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", text) is not None
+    return term in text
+
+
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
+    return any(_has_term(text, term) for term in terms)
 
 
 def score_post(text: str) -> ScoreResult:
@@ -81,7 +87,7 @@ def score_post(text: str) -> ScoreResult:
     if category != "other":
         reasons.append(f"Matches {category.replace('_', ' ')} priority")
 
-    matched_skills = [term for term in SKILL_TERMS if term in normalized]
+    matched_skills = [term for term in SKILL_TERMS if _has_term(normalized, term)]
     if matched_skills:
         score += min(24, len(matched_skills) * 6)
         reasons.append("Relevant stack: " + ", ".join(matched_skills[:4]))
@@ -107,7 +113,7 @@ def score_post(text: str) -> ScoreResult:
         reasons.append("Post provides meaningful detail")
 
     for flag in RED_FLAGS:
-        if flag in normalized:
+        if _has_term(normalized, flag):
             score -= 35
             risks.append(f"Red flag: {flag}")
 

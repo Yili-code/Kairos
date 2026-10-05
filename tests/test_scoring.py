@@ -60,3 +60,19 @@ def test_upfront_payment_requirement_is_high_risk() -> None:
 
     assert result.score < 55
     assert any("Upfront payment" in risk for risk in result.risks)
+
+
+def test_ai_skill_does_not_match_inside_paid_or_available() -> None:
+    result = score_post(
+        "Paid internship available for a student writer. Salary provided. DM us."
+    )
+
+    assert not any("Relevant stack" in reason for reason in result.reasons)
+
+
+def test_intern_category_does_not_match_inside_international() -> None:
+    result = score_post(
+        "International university student networking event. Message the organizer."
+    )
+
+    assert result.category == "other"

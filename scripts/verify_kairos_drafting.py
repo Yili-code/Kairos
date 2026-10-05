@@ -42,7 +42,7 @@ async def verify(api_key: str, model: str, fallback_model: str = "") -> dict[str
     result = await GeminiClient(api_key, model, fallback_model=fallback_model).assess_and_draft(candidate)
     return {
         "fit_score_valid": 0 <= result["fit_score"] <= 100,
-        "interest_score_valid": 1 <= result["interest_score"] <= 5,
+        "interest_score_matches_explicit_answer": result["interest_score"] == 4,
         "language": result["language"],
         "assessment_length": len(result["assessment"]),
         "draft_length": len(result["draft_message"]),
