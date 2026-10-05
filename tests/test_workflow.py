@@ -215,3 +215,27 @@ def test_retry_draft_is_blocked_without_a_failed_generation() -> None:
     run_immediate(workflow.handle_callback("cb", "q:1:retry_draft"))
 
     assert telegram.callbacks[-1] == ("cb", "Nothing to retry")
+
+
+def test_duplicate_start_callback_does_not_restart_questionnaire() -> None:
+    workflow, repo, telegram, _ = make_workflow()
+    candidate = Candidate("1", "builder", "post", "url", "", "hackathon", status=Status.TELEGRAM_SENT)
+    repo.save(candidate)
+
+    run_immediate(workflow.handle_callback("cb1", "q:1:start"))
+    run_immediate(workflow.handle_callback("cb2", "q:1:start"))
+
+    assert repo.get("1").answers["step"] == "interest"
+    assert len(telegram.questions) == 1
+    assert telegram.callbacks[-1] == ("cb2", "This action is no longer active")
+
+
+def test_stale_skip_cannot_overwrite_a_sent_candidate() -> None:
+    workflow, repo, telegram, _ = make_workflow()
+    candidate = Candidate("1", "builder", "post", "url", "", "hackathon", status=Status.SENT)
+    repo.save(candidate)
+
+    run_immediate(workflow.handle_callback("cb", "q:1:skip"))
+
+    assert repo.get("1").status == Status.SENT
+    assert telegram.callbacks[-1] == ("cb", "This action is no longer active")

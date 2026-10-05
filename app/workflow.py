@@ -101,11 +101,22 @@ class Workflow:
             return
 
         if action == "skip":
+            if candidate.status not in {
+                Status.TELEGRAM_SENT,
+                Status.QUESTIONNAIRE,
+                Status.EVALUATED,
+                Status.DRAFT_READY,
+            }:
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.status = Status.SKIPPED
             self.repository.save(candidate)
             await self.telegram.answer_callback(callback_id, "Skipped")
             return
         if action == "start":
+            if candidate.status != Status.TELEGRAM_SENT:
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.status = Status.QUESTIONNAIRE
             candidate.answers["step"] = "interest"
             self.repository.save(candidate)
@@ -113,6 +124,9 @@ class Workflow:
             await self.telegram.send_question(candidate, "How interested are you?", [(str(i), f"interest_{i}") for i in range(1, 6)])
             return
         if action.startswith("interest_"):
+            if not self._is_question_step(candidate, "interest"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["interest"] = action.rsplit("_", 1)[1]
             candidate.answers["step"] = "capacity"
             self.repository.save(candidate)
@@ -122,27 +136,42 @@ class Workflow:
             ])
             return
         if action.startswith("capacity_"):
+            if not self._is_question_step(candidate, "capacity"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["capacity"] = action.removeprefix("capacity_")
             self.repository.save(candidate)
             await self.telegram.answer_callback(callback_id, "Saved")
             await self._ask_category_detail(candidate)
             return
         if action.startswith("role_"):
+            if not self._is_question_step(candidate, "preferred_role"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["preferred_role"] = action.removeprefix("role_")
             await self.telegram.answer_callback(callback_id, "Saved")
             await self._ask_motivation(candidate)
             return
         if action.startswith("compensation_"):
+            if not self._is_question_step(candidate, "compensation_condition"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["compensation_condition"] = action.removeprefix("compensation_")
             await self.telegram.answer_callback(callback_id, "Saved")
             await self._ask_motivation(candidate)
             return
         if action.startswith("engagement_"):
+            if not self._is_question_step(candidate, "engagement_preference"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["engagement_preference"] = action.removeprefix("engagement_")
             await self.telegram.answer_callback(callback_id, "Saved")
             await self._ask_motivation(candidate)
             return
         if action.startswith("motivation_"):
+            if not self._is_question_step(candidate, "motivation"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["motivation"] = action.removeprefix("motivation_")
             candidate.answers["step"] = "concern"
             self.repository.save(candidate)
@@ -153,6 +182,9 @@ class Workflow:
             ])
             return
         if action.startswith("concern_"):
+            if not self._is_question_step(candidate, "concern"):
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["concern"] = action.removeprefix("concern_")
             if action == "concern_other":
                 candidate.answers["step"] = "awaiting_note"
@@ -168,6 +200,9 @@ class Workflow:
             await self._generate(candidate)
             return
         if action == "revise":
+            if candidate.status != Status.DRAFT_READY or candidate.answers.get("step") != "draft_ready":
+                await self._reject_stale_callback(callback_id)
+                return
             candidate.answers["step"] = "awaiting_revision"
             self.repository.save(candidate)
             await self.telegram.answer_callback(callback_id, "Reply with revision instructions")
@@ -189,6 +224,13 @@ class Workflow:
             await self._send_approved(candidate)
             return
         await self.telegram.answer_callback(callback_id, "Unsupported action")
+
+    @staticmethod
+    def _is_question_step(candidate: Candidate, expected_step: str) -> bool:
+        return candidate.status == Status.QUESTIONNAIRE and candidate.answers.get("step") == expected_step
+
+    async def _reject_stale_callback(self, callback_id: str) -> None:
+        await self.telegram.answer_callback(callback_id, "This action is no longer active")
 
     async def handle_text(self, text: str, *, reply_to_text: str = "") -> bool:
         waiting = self.repository.find_by_status([Status.QUESTIONNAIRE, Status.DRAFT_READY], limit=20)

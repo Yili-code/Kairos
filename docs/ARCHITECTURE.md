@@ -20,6 +20,8 @@ Terminal or intervention states are `skipped`, `telegram_uncertain`, `dm_unavail
 
 The Telegram candidate-card receipt stores the returned message ID. If delivery raises after entering `telegram_sending`, the candidate moves to `telegram_uncertain` and is not automatically resent; a timeout may occur after Telegram accepted the message.
 
+Every Telegram button is also checked against the candidate's current state and questionnaire step. Retried callbacks and buttons from old messages are rejected instead of replaying transitions or overwriting terminal states.
+
 `generation_failed` is represented by `evaluated` plus an answer-step marker. Answers remain durable and Telegram offers an explicit drafting retry. Retrying generation never authorizes sending.
 
 `send_uncertain` is intentionally not retried. A process can fail after Threads accepted the click but before the receipt was saved. Automatic retry could create a duplicate message.
