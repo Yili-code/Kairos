@@ -9,6 +9,9 @@ from typing import Any
 class Status(StrEnum):
     DISCOVERED = "discovered"
     SHORTLISTED = "shortlisted"
+    TELEGRAM_SENDING = "telegram_sending"
+    TELEGRAM_SENT = "telegram_sent"
+    TELEGRAM_UNCERTAIN = "telegram_uncertain"
     QUESTIONNAIRE = "questionnaire"
     EVALUATED = "evaluated"
     DRAFT_READY = "draft_ready"
@@ -42,6 +45,7 @@ class Candidate:
     draft_hash: str = ""
     approval_hash: str = ""
     send_attempt_id: str = ""
+    telegram_message_id: int | None = None
     sent_at: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())

@@ -14,9 +14,11 @@
 
 ## State transitions
 
-`discovered → shortlisted → questionnaire → evaluated → draft_ready → sending → sent`
+`discovered → telegram_sending → telegram_sent → questionnaire → evaluated → draft_ready → sending → sent`
 
-Terminal or intervention states are `skipped`, `dm_unavailable`, `send_failed`, and `send_uncertain`.
+Terminal or intervention states are `skipped`, `telegram_uncertain`, `dm_unavailable`, `send_failed`, and `send_uncertain`.
+
+The Telegram candidate-card receipt stores the returned message ID. If delivery raises after entering `telegram_sending`, the candidate moves to `telegram_uncertain` and is not automatically resent; a timeout may occur after Telegram accepted the message.
 
 `generation_failed` is represented by `evaluated` plus an answer-step marker. Answers remain durable and Telegram offers an explicit drafting retry. Retrying generation never authorizes sending.
 

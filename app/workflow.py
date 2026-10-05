@@ -65,14 +65,29 @@ class Workflow:
             reverse=True,
         )[: self.max_cards]
         sent = 0
+        card_errors = 0
         for candidate in shortlist:
-            candidate.status = Status.SHORTLISTED
+            candidate.status = Status.TELEGRAM_SENDING
             self.repository.save(candidate)
-            await self.telegram.send_candidate(candidate)
+            try:
+                candidate.telegram_message_id = await self.telegram.send_candidate(candidate)
+            except RuntimeError:
+                candidate.status = Status.TELEGRAM_UNCERTAIN
+                self.repository.save(candidate)
+                card_errors += 1
+                continue
+            candidate.status = Status.TELEGRAM_SENT
+            self.repository.save(candidate)
             sent += 1
         if terms and errors == len(terms):
             await self.telegram.notify("Opportunity scan failed for every search term. No results were evaluated.")
-        return {"discovered": len(created), "shortlisted": len(shortlist), "cards_sent": sent, "search_errors": errors}
+        return {
+            "discovered": len(created),
+            "shortlisted": len(shortlist),
+            "cards_sent": sent,
+            "card_errors": card_errors,
+            "search_errors": errors,
+        }
 
     async def handle_callback(self, callback_id: str, data: str) -> None:
         parts = data.split(":", 2)

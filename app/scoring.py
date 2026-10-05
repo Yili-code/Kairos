@@ -37,6 +37,21 @@ RED_FLAGS = (
     "無薪實習",
 )
 
+UNPAID_TERMS = ("unpaid", "uncompensated", "volunteer only", "無薪", "無給", "純志工")
+FULL_TIME_TERMS = ("full-time", "full time", "40 hours", "40 hrs", "全職", "週一至週五")
+ONSITE_TERMS = ("onsite", "on-site", "in office", "實體", "到班", "進辦公室")
+ACCEPTED_LOCATION_TERMS = ("remote", "hybrid", "遠端", "混合", "taipei", "台北", "keelung", "基隆")
+UPFRONT_PAYMENT_TERMS = (
+    "registration fee",
+    "training fee",
+    "deposit required",
+    "pay to join",
+    "先繳費",
+    "先付款",
+    "保證金",
+    "培訓費",
+)
+
 
 @dataclass(frozen=True)
 class ScoreResult:
@@ -95,6 +110,22 @@ def score_post(text: str) -> ScoreResult:
         if flag in normalized:
             score -= 35
             risks.append(f"Red flag: {flag}")
+
+    if category in {"internship", "paid_project"} and _contains(normalized, UNPAID_TERMS):
+        score -= 35
+        risks.append("Unpaid work conflicts with the compensation policy")
+
+    if category == "internship" and _contains(normalized, FULL_TIME_TERMS):
+        score -= 30
+        risks.append("Full-time workload exceeds the 13–16 hour term-time target")
+
+    if _contains(normalized, ONSITE_TERMS) and not _contains(normalized, ACCEPTED_LOCATION_TERMS):
+        score -= 18
+        risks.append("Onsite location is outside the confirmed Taipei or Keelung range")
+
+    if _contains(normalized, UPFRONT_PAYMENT_TERMS):
+        score -= 60
+        risks.append("Upfront payment requirement is a high-risk signal")
 
     if category == "other":
         risks.append("Opportunity type is unclear")

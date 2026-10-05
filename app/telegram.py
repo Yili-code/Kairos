@@ -26,7 +26,7 @@ class TelegramClient:
             raise RuntimeError(f"Telegram {method} failed")
         return result["result"]
 
-    async def send_candidate(self, candidate: Candidate) -> None:
+    async def send_candidate(self, candidate: Candidate) -> int:
         reasons = "\n".join(f"• {html.escape(reason)}" for reason in candidate.reasons[:4]) or "• No strong signal"
         risks = "\n".join(f"• {html.escape(risk)}" for risk in candidate.risks[:3]) or "• None detected"
         excerpt = html.escape(candidate.text[:700])
@@ -40,13 +40,14 @@ class TelegramClient:
             {"text": "Skip", "callback_data": f"q:{candidate.id}:skip"},
             {"text": "Open post", "url": candidate.permalink},
         ]]
-        await self.call("sendMessage", {
+        result = await self.call("sendMessage", {
             "chat_id": self.owner_chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
             "reply_markup": {"inline_keyboard": keyboard},
         })
+        return int(result["message_id"])
 
     async def send_question(self, candidate: Candidate, question: str, options: list[tuple[str, str]]) -> None:
         buttons = [

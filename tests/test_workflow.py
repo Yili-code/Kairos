@@ -21,13 +21,21 @@ class FakeTelegram:
         self.free_text_prompts = []
         self.generation_errors = []
 
-    async def send_candidate(self, candidate): self.cards.append(candidate.id)
+    async def send_candidate(self, candidate):
+        self.cards.append(candidate.id)
+        return 101
     async def send_question(self, candidate, question, options): self.questions.append((candidate.id, question, options))
     async def send_draft(self, candidate): self.drafts.append(candidate.draft_message)
     async def send_free_text_prompt(self, candidate, purpose, question): self.free_text_prompts.append((candidate.id, purpose, question))
     async def send_generation_error(self, candidate): self.generation_errors.append(candidate.id)
     async def notify(self, text): self.notifications.append(text)
     async def answer_callback(self, callback_id, text): self.callbacks.append((callback_id, text))
+
+
+class FailingCardTelegram(FakeTelegram):
+    async def send_candidate(self, candidate):
+        self.cards.append(candidate.id)
+        raise RuntimeError("telegram response was not confirmed")
 
 
 class FakeLLM:
@@ -79,7 +87,25 @@ def test_discovery_deduplicates_and_sends_one_card() -> None:
     assert first["cards_sent"] == 1
     assert second["cards_sent"] == 0
     assert telegram.cards == ["1"]
-    assert repo.get("1").status == Status.SHORTLISTED
+    assert repo.get("1").status == Status.TELEGRAM_SENT
+    assert repo.get("1").telegram_message_id == 101
+
+
+def test_uncertain_card_delivery_is_recorded_without_automatic_resend() -> None:
+    workflow, repo, _, _ = make_workflow()
+    telegram = FailingCardTelegram()
+    workflow.telegram = telegram
+
+    first = run_immediate(workflow.discover(("hackathon",)))
+    second = run_immediate(workflow.discover(("hackathon",)))
+
+    assert first["cards_sent"] == 0
+    assert first["card_errors"] == 1
+    assert second["cards_sent"] == 0
+    assert second["card_errors"] == 0
+    assert telegram.cards == ["1"]
+    assert repo.get("1").status == Status.TELEGRAM_UNCERTAIN
+    assert repo.get("1").telegram_message_id is None
 
 
 def test_exact_displayed_draft_can_be_approved_and_sent() -> None:
