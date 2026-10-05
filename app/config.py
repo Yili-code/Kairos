@@ -58,6 +58,8 @@ class Settings:
             missing.append("THREADS_STORAGE_STATE_JSON")
         if missing:
             raise RuntimeError("Missing production configuration: " + ", ".join(missing))
+        if not self.public_base_url.startswith("https://"):
+            raise RuntimeError("Production PUBLIC_BASE_URL must use HTTPS")
 
     @classmethod
     def from_env(cls, *, require_secrets: bool = True) -> "Settings":
@@ -77,8 +79,11 @@ class Settings:
         storage_state = os.getenv("THREADS_STORAGE_STATE_JSON", "").strip()
         if storage_state:
             json.loads(storage_state)
+        app_env = os.getenv("APP_ENV", "development").strip().lower()
+        if app_env not in {"development", "production"}:
+            raise RuntimeError("APP_ENV must be development or production")
         return cls(
-            app_env=os.getenv("APP_ENV", "development"),
+            app_env=app_env,
             public_base_url=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
             telegram_bot_token=get("TELEGRAM_BOT_TOKEN"),
             telegram_owner_chat_id=int(chat_id_raw or 0),
