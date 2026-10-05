@@ -12,6 +12,7 @@ Last verified: 2026-10-05 (Asia/Taipei)
 - DM automation remains disabled.
 - Invalid scheduler and Telegram webhook secrets both receive HTTP 403, and the deployed revision has no error-level log entries from the verification window.
 - The runtime service account has a database-conditioned Datastore role for `thread-opportunity` and Secret Manager access only on the six named Kairos secrets.
+- An OSV audit found no known vulnerability in the five directly pinned production packages. Full transitive resolution timed out and remains unverified.
 
 ## Activation gates
 
