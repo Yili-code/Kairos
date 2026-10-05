@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import FastAPI, Header, HTTPException, Request
+
+from app.config import Settings
+from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
+from app.llm import GeminiClient
+from app.storage import FirestoreRepository, InMemoryRepository
+from app.telegram import TelegramClient
+from app.threads_client import ThreadsClient
+from app.workflow import Workflow
+
+
+def build_workflow(settings: Settings) -> Workflow:
+    repository = (
+        FirestoreRepository(
+            settings.google_cloud_project,
+            settings.firestore_database,
+            settings.firestore_collection,
+        )
+        if settings.google_cloud_project
+        else InMemoryRepository()
+    )
+    dm_sender = (
+        ThreadsBrowserSender(settings.threads_storage_state_json)
+        if settings.dm_automation_enabled
+        else DisabledDMSender()
+    )
+    return Workflow(
+        repository=repository,
+        threads=ThreadsClient(settings.threads_api_base, settings.threads_access_token),
+        telegram=TelegramClient(settings.telegram_bot_token, settings.telegram_owner_chat_id),
+        llm=GeminiClient(
+            settings.gemini_api_key,
+            settings.gemini_model,
+            fallback_model=settings.gemini_fallback_model,
+        ),
+        dm_sender=dm_sender,
+        shortlist_threshold=settings.shortlist_threshold,
+        per_term_limit=settings.discovery_limit_per_term,
+        max_cards=settings.telegram_max_cards_per_run,
+    )
+
+
+def create_app(settings: Settings | None = None, workflow: Workflow | None = None) -> FastAPI:
+    settings = settings or Settings.from_env(require_secrets=False)
+    if settings.app_env == "production":
+        settings.validate_production()
+    active_workflow = workflow or build_workflow(settings)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+
+    api = FastAPI(title="Kairos", version="0.1.0", lifespan=lifespan)
+    api.state.settings = settings
+    api.state.workflow = active_workflow
+
+    @api.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "environment": settings.app_env,
+            "firestore_configured": bool(settings.google_cloud_project),
+            "gemini_configured": bool(settings.gemini_api_key),
+            "threads_search_configured": bool(settings.threads_access_token),
+            "dm_automation_enabled": settings.dm_automation_enabled,
+        }
+
+    @api.post("/tasks/discover")
+    async def discover(x_scheduler_secret: str | None = Header(default=None)) -> dict[str, int]:
+        if not settings.scheduler_secret or x_scheduler_secret != settings.scheduler_secret:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if not settings.threads_access_token:
+            raise HTTPException(status_code=503, detail="Threads search is not configured")
+        return await active_workflow.discover(settings.threads_search_terms)
+
+    @api.post("/telegram/webhook")
+    async def telegram_webhook(
+        request: Request,
+        x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    ) -> dict[str, bool]:
+        if (
+            not settings.telegram_webhook_secret
+            or x_telegram_bot_api_secret_token != settings.telegram_webhook_secret
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        update = await request.json()
+        callback = update.get("callback_query")
+        if callback:
+            chat_id = ((callback.get("message") or {}).get("chat") or {}).get("id")
+            if int(chat_id or 0) != settings.telegram_owner_chat_id:
+                raise HTTPException(status_code=403, detail="Owner only")
+            await active_workflow.handle_callback(str(callback["id"]), str(callback.get("data") or ""))
+            return {"ok": True}
+        message = update.get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        if int(chat_id or 0) != settings.telegram_owner_chat_id:
+            raise HTTPException(status_code=403, detail="Owner only")
+        text = str(message.get("text") or "").strip()
+        if text:
+            reply_to_text = str(((message.get("reply_to_message") or {}).get("text") or ""))
+            handled = await active_workflow.handle_text(text, reply_to_text=reply_to_text)
+            if not handled:
+                await active_workflow.telegram.notify("No opportunity is waiting for free-text input.")
+        return {"ok": True}
+
+    return api
+
+
+app = create_app()
