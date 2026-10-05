@@ -132,7 +132,10 @@ class Workflow:
             self.repository.save(candidate)
             await self.telegram.answer_callback(callback_id, "Saved")
             await self.telegram.send_question(candidate, "Does the expected workload fit 13–16 hours/week during term?", [
-                ("Fits", "capacity_fits"), ("Stretch", "capacity_stretch"), ("No", "capacity_no")
+                ("Fits", "capacity_fits"),
+                ("Stretch", "capacity_stretch"),
+                ("No", "capacity_no"),
+                ("Need details", "capacity_unknown"),
             ])
             return
         if action.startswith("capacity_"):

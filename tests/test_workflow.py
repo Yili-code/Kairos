@@ -190,6 +190,17 @@ def test_hackathon_questionnaire_asks_for_preferred_role() -> None:
     assert telegram.questions[-1][1] == "Which role would you prefer to own?"
 
 
+def test_workload_question_allows_an_unknown_answer() -> None:
+    workflow, repo, telegram, _ = make_workflow()
+    candidate = Candidate("1", "builder", "post", "url", "", "hackathon", status=Status.QUESTIONNAIRE)
+    candidate.answers["step"] = "interest"
+    repo.save(candidate)
+
+    run_immediate(workflow.handle_callback("cb", "q:1:interest_4"))
+
+    assert ("Need details", "capacity_unknown") in telegram.questions[-1][2]
+
+
 def test_generation_failure_is_recoverable_without_losing_answers() -> None:
     workflow, repo, telegram, _ = make_workflow()
     workflow.llm = FailingLLM()
