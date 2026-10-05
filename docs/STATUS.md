@@ -4,10 +4,10 @@ Last verified: 2026-10-05 (Asia/Taipei)
 
 ## Live evidence
 
-- Cloud Run revision `kairos-00004-2cj` serves 100% of traffic and `/health` returns `ok`.
+- Cloud Run revision `kairos-00005-b6n` serves 100% of traffic and `/health` returns `ok`.
 - Firestore database `thread-opportunity` is reachable and currently contains zero opportunity documents.
 - The Free Tier Gemini key successfully produced a schema-valid Kairos assessment and draft through the `gemini-3.5-flash` to `gemini-3.5-flash-lite` fallback chain.
-- Thirty local tests pass, including direct FastAPI route-boundary checks and uncertain Telegram delivery coverage.
+- Thirty-two local tests pass, including route-boundary, uncertain-delivery, and stale-callback coverage.
 - `PUBLIC_BASE_URL` is configured.
 - DM automation remains disabled.
 - Invalid scheduler and Telegram webhook secrets both receive HTTP 403, and the deployed revision has no error-level log entries from the verification window.
