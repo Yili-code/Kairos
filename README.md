@@ -11,6 +11,7 @@ This is intentionally not an autonomous outreach bot. Discovery can run unattend
 - Schedule: 08:00 and 20:00 Asia/Taipei.
 - Maximum three new Telegram opportunity cards per run.
 - English and Traditional Chinese discovery terms are enabled by default.
+- Threads discovery explicitly uses Meta's `RECENT` keyword-search mode and requires `threads_basic` plus `threads_keyword_search` approval.
 - Term-time target: 13–16 hours per week.
 - Remote preferred; onsite work in Taipei or Keelung is acceptable; overseas and fixed cross-time-zone meetings are acceptable.
 - Unpaid trials are limited to 5–8 total hours, cannot be used directly in a commercial product, and require explicit IP terms.

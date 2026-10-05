@@ -14,20 +14,28 @@ FIELDS = (
 
 
 class ThreadsClient:
-    def __init__(self, base_url: str, access_token: str, timeout: float = 20.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        access_token: str,
+        timeout: float = 20.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.timeout = timeout
+        self.transport = transport
 
     async def search(self, query: str, *, limit: int = 20) -> list[Candidate]:
         params = {
             "q": query,
             "search_type": "RECENT",
+            "search_mode": "KEYWORD",
             "limit": max(1, min(limit, 100)),
             "fields": FIELDS,
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 response = await client.get(
                     f"{self.base_url}/keyword_search",
                     params=params,
@@ -35,9 +43,18 @@ class ThreadsClient:
                 )
                 response.raise_for_status()
                 payload: dict[str, Any] = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError("Threads keyword search failed") from None
-        return [self._candidate(item, query) for item in payload.get("data", []) if item.get("id")]
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Threads keyword search failed with HTTP {exc.response.status_code}") from None
+        except (httpx.HTTPError, ValueError, TypeError):
+            raise RuntimeError("Threads keyword search transport or response failed") from None
+        data = payload.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Threads keyword search returned an invalid data shape")
+        return [
+            self._candidate(item, query)
+            for item in data
+            if isinstance(item, dict) and item.get("id")
+        ]
 
     @staticmethod
     def _candidate(item: dict[str, Any], query: str) -> Candidate:
