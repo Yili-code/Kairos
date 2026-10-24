@@ -115,18 +115,18 @@ class FirestoreRepository:
         self.collection = self.client.collection(collection)
 
     def get(self, candidate_id: str) -> Candidate | None:
-        snapshot = self.collection.document(candidate_id).get()
+        snapshot = self.collection.document(candidate_id).get(timeout=5, retry=None)
         return Candidate.from_dict(snapshot.to_dict()) if snapshot.exists else None
 
     def save(self, candidate: Candidate) -> None:
         candidate.updated_at = datetime.now(UTC).isoformat()
-        self.collection.document(candidate.id).set(candidate.to_dict(), merge=True)
+        self.collection.document(candidate.id).set(candidate.to_dict(), merge=True, timeout=5, retry=None)
 
     def create_if_absent(self, candidate: Candidate) -> bool:
         from google.api_core.exceptions import AlreadyExists
 
         try:
-            self.collection.document(candidate.id).create(candidate.to_dict())
+            self.collection.document(candidate.id).create(candidate.to_dict(), timeout=5, retry=None)
             return True
         except AlreadyExists:
             return False
@@ -136,7 +136,7 @@ class FirestoreRepository:
         if not values:
             return []
         query = self.collection.where("status", "in", values).limit(limit)
-        return [Candidate.from_dict(doc.to_dict()) for doc in query.stream()]
+        return [Candidate.from_dict(doc.to_dict()) for doc in query.stream(timeout=10, retry=None)]
 
     def claim_for_card(self, candidate_id: str) -> Candidate | None:
         from google.cloud import firestore
@@ -145,7 +145,7 @@ class FirestoreRepository:
 
         @firestore.transactional
         def claim(transaction):
-            snapshot = reference.get(transaction=transaction)
+            snapshot = reference.get(transaction=transaction, timeout=5, retry=None)
             if not snapshot.exists:
                 return None
             data = snapshot.to_dict()
@@ -166,7 +166,7 @@ class FirestoreRepository:
         ref = self.collection.document(candidate_id)
         @firestore.transactional
         def finish(transaction):
-            snapshot = ref.get(transaction=transaction)
+            snapshot = ref.get(transaction=transaction, timeout=5, retry=None)
             if not snapshot.exists:return False
             row = snapshot.to_dict()
             if row.get('status') != 'telegram_sending' or row.get('card_attempt_id', '') != attempt_id:return False
@@ -181,7 +181,7 @@ class FirestoreRepository:
 
         @firestore.transactional
         def claim(transaction):
-            snapshot = reference.get(transaction=transaction)
+            snapshot = reference.get(transaction=transaction, timeout=5, retry=None)
             if not snapshot.exists:
                 return None
             candidate = Candidate.from_dict(snapshot.to_dict())
@@ -202,7 +202,7 @@ class FirestoreRepository:
 
         @firestore.transactional
         def claim(active_transaction):
-            snapshot = reference.get(transaction=active_transaction)
+            snapshot = reference.get(transaction=active_transaction, timeout=5, retry=None)
             if not snapshot.exists:
                 return None
             data = snapshot.to_dict()
