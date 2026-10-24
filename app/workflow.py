@@ -61,10 +61,19 @@ class Workflow:
         announcements_discovered = 0
         deadline = time.monotonic() + 480
         deferred_terms = 0
+        attempted_competitions: set[str] = set()
+
+        def recover_empty_assessment(candidate):
+            if (candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition'
+                    and candidate.competition.get('decision') == 'pending'
+                    and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values())):
+                candidate.status = Status.COMPETITION_PENDING_SCREEN
+                self.repository.save(candidate)
+            return candidate
 
         async def ingest(candidate):
             nonlocal screened, competition_errors, competition_source_errors, competition_attempts
-            existing = self.repository.get(candidate.id)
+            existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
             candidate = existing or candidate
@@ -75,7 +84,7 @@ class Workflow:
                 urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
                 if urls:
                     candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
-                    canonical = self.repository.get(candidate.id)
+                    canonical = recover_empty_assessment(self.repository.get(candidate.id))
                     if canonical and canonical.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                         return
                     candidate = canonical or candidate
@@ -86,12 +95,14 @@ class Workflow:
                     if self.repository.create_if_absent(candidate):
                         created[candidate.id] = candidate
                 if (screened >= self.competition_screen_limit
+                        or candidate.id in attempted_competitions
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
                     return
                 candidate = self.repository.claim_for_screen(candidate.id)
                 if not candidate:
                     return
+                attempted_competitions.add(candidate.id)
                 competition_attempts += 1
                 await self.competition_screener.screen(candidate)
                 if candidate.competition.get("sources"):
@@ -104,6 +115,8 @@ class Workflow:
                     competition_source_errors += 1
                 if not any(fact.get("quote") for fact in facts.values()):
                     competition_errors += 1
+                    if candidate.competition.get('decision') == 'pending':
+                        candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.competition.get("decision") == "rejected":
                     candidate.status = Status.SKIPPED
                 self.repository.save(candidate)
@@ -116,9 +129,11 @@ class Workflow:
             leads, announcement_errors = await self.announcement_source.discover()
             announcements_discovered = len(leads)
             # Fresh explicit AI calls should not wait behind generic design-award backlog.
-            for candidate in sorted(leads, key=lambda item: bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I)), reverse=True):
+            for candidate in sorted(leads, key=lambda item: (
+                item.search_term == 'announcement:curated',
+                bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I))), reverse=True):
                 await ingest(candidate)
-        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=100)
+        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING, Status.DISCOVERED], limit=100)
         for candidate in sorted(backlog, key=lambda item: item.created_at):
             await ingest(candidate)
         for term_index, term in enumerate(terms):

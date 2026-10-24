@@ -7,7 +7,7 @@ import html
 import httpx
 import pytest
 
-from app.competitions import CompetitionScreener, TRUNCATED_MARKER, allowed_url, evaluate, rules_urls, screening_prompt
+from app.competitions import CompetitionScreener, TRUNCATED_MARKER, allowed_url, evaluate, rules_urls, screening_prompt, grounded_quote, evidence_spans, resolve_evidence
 from app.models import Candidate, Status
 from app.scoring import score_post
 from app.telegram import TelegramClient
@@ -18,7 +18,8 @@ NOW = datetime(2026, 10, 24, tzinfo=UTC)
 URL = "https://sample.devpost.com/rules"
 QUOTE = ("These are the official contest terms and entry conditions. "
          "No attendance or presentation is required in any stage, including awards. "
-         "Entrants retain the right to publicly display their entries.")
+         "Entrants retain the right to publicly display their entries. Captions must be written personally.")
+QUOTE += ' Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
 SOURCES = {URL: QUOTE}
 
 
@@ -106,13 +107,108 @@ def test_ai_share_is_derived_from_artifacts_and_human_only_work_is_preserved():
     part = {'name': 'Image', 'ai_work': 'Generate image', 'human_work': 'Select and inspect',
             'tools': 'Existing ChatGPT', 'human_only': False, 'weight': .95, 'ai_fraction': 1}
     caption = {**part, 'name': 'Caption', 'human_only': True, 'weight': .05, 'ai_fraction': 0,
-               'ai_work': 'none', 'human_work': 'Write caption personally'}
+               'ai_work': 'none', 'human_work': 'Write caption personally',
+               'rule_quote': 'Captions must be written personally.', 'rule_url': URL}
     raw['estimate']['production_components'] = [part, caption]
     report = evaluate(raw, SOURCES, now=NOW)
     assert report['estimate']['ai_share'] == .95 and report['decision'] == 'eligible'
     raw['estimate']['production_components'][1]['ai_fraction'] = 1
     report = evaluate(raw, SOURCES, now=NOW)
     assert report['estimate']['ai_share'] is None and report['decision'] == 'pending'
+
+
+def test_cjk_layout_differences_preserve_original_source_span_without_merging_english_words():
+    source = '公告：獎 金新臺幣１０，０００元。'
+    assert grounded_quote('獎金新臺幣10,000元', source) == '獎 金新臺幣１０，０００元'
+    assert grounded_quote('nowhere', 'now here') is None
+    assert grounded_quote('', source) is None
+
+
+def test_equivalent_encoded_document_url_is_grounded_at_the_actual_source_key():
+    url = 'https://campus.edu.tw/競賽.pdf'
+    encoded = str(httpx.URL(url))
+    raw = valid_report()
+    for fact in raw['facts'].values():
+        fact['url'] = encoded
+    report = evaluate(raw, {url: QUOTE}, now=NOW)
+    assert report['decision'] == 'eligible'
+    assert report['facts']['prize']['url'] == url
+
+
+def test_evidence_ids_restore_exact_text_instead_of_accepting_model_paraphrases():
+    catalog = evidence_spans({URL: 'Entry is free. Cash prize: US$1000.'})
+    prize_id = next(key for key, span in catalog.items() if 'Cash prize' in span['text'])
+    raw = {'facts': {'prize': {'value': 'US$1000', 'quote': 'A fabricated paraphrase', 'url': 'https://evil.test', 'evidence_id': prize_id}}}
+    resolve_evidence(raw, catalog)
+    assert raw['facts']['prize']['quote'] == 'Cash prize: US$1000.'
+    assert raw['facts']['prize']['url'] == URL
+
+
+def test_overlapping_rule_reads_keep_candidate_receipts_separate():
+    async def handler(request):
+        await asyncio.sleep(0)
+        return httpx.Response(403)
+    async def run():
+        screener = CompetitionScreener(None, ('edu.tw',), transport=httpx.MockTransport(handler))
+        first = Candidate('first', 'x', 'https://campus.edu.tw/one', 'https://campus.edu.tw/one', '', 'contest')
+        second = Candidate('second', 'x', 'https://campus.edu.tw/two', 'https://campus.edu.tw/two', '', 'contest')
+        await asyncio.gather(screener.screen(first), screener.screen(second))
+        assert [row['url'] for row in first.competition['fetch_report']] == [first.permalink]
+        assert [row['url'] for row in second.competition['fetch_report']] == [second.permalink]
+    asyncio.run(run())
+
+
+def test_total_rule_fetch_budget_cancels_a_slow_source():
+    async def handler(request):
+        await asyncio.sleep(10)
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text='Rules')
+    screener = CompetitionScreener(None, ('edu.tw',), transport=httpx.MockTransport(handler), fetch_timeout=.01)
+    assert asyncio.run(screener.sources('https://campus.edu.tw/rules')) == {}
+    assert screener.last_report[-1]['status'] == 'fetch_budget_exhausted'
+
+
+@pytest.mark.parametrize('field,quote', [
+    ('deadline', '收件截止日期為2026年11月16日止。'),
+    ('registration_fee', '活動採線上報名並上傳作品。'),
+])
+def test_date_only_and_online_entry_do_not_imply_a_timezone_or_free_fee(field, quote):
+    raw = valid_report()
+    raw['facts'][field]['quote'] = quote
+    report = evaluate(raw, {URL: QUOTE + ' ' + quote}, now=NOW)
+    assert report['facts'][field]['value'] == 'unknown' and report['decision'] == 'pending'
+
+
+def test_unproven_human_only_restriction_cannot_drive_an_ai_percentage():
+    raw = valid_report()
+    raw['estimate']['production_components'] = [dict(name='Biography', weight=1, ai_fraction=0, human_only=True,
+        ai_work='none', human_work='Write biography', tools='Text editor', rule_quote=QUOTE, rule_url=URL)]
+    # A grounded rule for captions is not automatically a grounded rule for a biography.
+    raw['estimate']['production_components'][0]['rule_quote'] = 'These are the official contest terms and entry conditions.'
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report['decision'] == 'pending'
+    assert report['estimate']['ai_share'] is None
+    assert report['estimate']['component_rule_issues']
+
+
+def test_recheck_preserves_grounded_facts_only_while_source_content_is_unchanged():
+    class LLM:
+        async def screen_competition(self, candidate, sources):
+            raw = valid_report()
+            if candidate.competition:
+                raw['facts']['prize'] = {'value': 'unknown', 'quote': '', 'url': ''}
+            return raw
+    class Screener(CompetitionScreener):
+        body = QUOTE
+        async def sources(self, text):
+            return {URL: self.body}
+    screener = Screener(LLM(), ('devpost.com',))
+    candidate = Candidate('recheck', 'x', URL, URL, '', '/competition')
+    run_immediate(screener.screen(candidate))
+    run_immediate(screener.screen(candidate))
+    assert candidate.competition['facts']['prize']['value'] != 'unknown'
+    screener.body += ' Rules updated.'
+    run_immediate(screener.screen(candidate))
+    assert candidate.competition['facts']['prize']['value'] == 'unknown'
 
 
 @pytest.mark.parametrize("key", list(valid_report()["facts"]))

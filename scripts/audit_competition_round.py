@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.announcements import AnnouncementSource
 from app.competitions import CompetitionScreener
-from app.config import DEFAULT_ANNOUNCEMENT_URLS, DEFAULT_RULES_HOSTS
+from app.config import DEFAULT_ANNOUNCEMENT_URLS, DEFAULT_RULES_HOSTS, DEFAULT_COMPETITION_SEEDS
 from app.llm import GeminiClient
 from app.models import Candidate
 from verify_competition_production import cloud_json, cloud_value
@@ -65,7 +65,8 @@ async def audit(args):
         return {'name': name, 'url': url, 'report': candidate.competition}
 
     async def listing_audit():
-        source = AnnouncementSource(DEFAULT_ANNOUNCEMENT_URLS, DEFAULT_RULES_HOSTS)
+        source = AnnouncementSource(DEFAULT_ANNOUNCEMENT_URLS, DEFAULT_RULES_HOSTS,
+                                    seed_pages=DEFAULT_COMPETITION_SEEDS if args.round == 3 else ())
         leads, errors = await source.discover()
         return {'errors': errors, 'receipts': source.last_report, 'leads': [{'title': item.text.splitlines()[0], 'url': item.permalink} for item in leads]}
 

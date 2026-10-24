@@ -34,6 +34,10 @@ DEFAULT_COMPETITION_COMPANIONS = {
         "https://cart.ntua.edu.tw/web/news/news_in.jsp?dm_no=DM1560757140522&np_no=NP1791778067267",
     ),
 }
+DEFAULT_COMPETITION_SEEDS = (
+    ('2026 書藝智生—AI 生成書法創藝比賽', 'https://tkutimes.tku.edu.tw/dtl.aspx?no=60832'),
+    ('The Post-Meaning Prize', 'https://www.postmeaning.art/rules'),
+)
 
 
 def _required(name: str) -> str:

@@ -74,13 +74,13 @@ class GeminiClient:
         return self._validate(await self._request_json(model, payload))
 
     async def screen_competition(self, candidate: Candidate, sources: dict[str, str]) -> dict[str, Any]:
-        from app.competitions import EFFORT_STAGES, FACTS, screening_prompt
+        from app.competitions import EFFORT_STAGES, FACTS, screening_prompt, evidence_spans, resolve_evidence
 
         if not self.api_key:
             raise RuntimeError("Competition screening requires the existing Gemini configuration")
         fact_schema = {
-            "type": "object", "required": ["value", "quote", "url"],
-            "properties": {name: {"type": "string"} for name in ("value", "quote", "url")},
+            "type": "object", "required": ["value", "quote", "url", "evidence_id"],
+            "properties": {name: {"type": "string"} for name in ("value", "quote", "url", "evidence_id")},
         }
         schema = {
             "type": "object", "required": ["facts", "estimate"],
@@ -93,10 +93,10 @@ class GeminiClient:
                         **{key: {"type": ["number", "null"]} for key in (*EFFORT_STAGES, "ai_share", "extra_tools_twd")},
                         "plan": {"type": "string"}, "uncertain": {"type": "boolean"},
                         "production_components": {"type": "array", "items": {
-                            "type": "object", "required": ["name", "weight", "ai_fraction", "human_only", "ai_work", "human_work", "tools"],
+                            "type": "object", "required": ["name", "weight", "ai_fraction", "human_only", "ai_work", "human_work", "tools", "rule_quote", "rule_url", "rule_evidence_id"],
                             "properties": {"name": {"type": "string"}, "weight": {"type": "number"},
                                            "ai_fraction": {"type": "number"}, "human_only": {"type": "boolean"},
-                                           **{key: {"type": "string"} for key in ("ai_work", "human_work", "tools")}},
+                                           **{key: {"type": "string"} for key in ("ai_work", "human_work", "tools", "rule_quote", "rule_url", "rule_evidence_id")}},
                         }},
                     },
                 },
@@ -112,7 +112,7 @@ class GeminiClient:
         # Reuse the existing configured fallback only for transient failures, once per model.
         for model in dict.fromkeys(item for item in (self.model, self.fallback_model) if item):
             try:
-                return await self._request_json(model, payload, attempts=1)
+                return resolve_evidence(await self._request_json(model, payload, attempts=1), evidence_spans(sources))
             except GeminiTransientError:
                 if model == (self.fallback_model or self.model):
                     raise

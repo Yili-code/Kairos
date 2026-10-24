@@ -203,6 +203,42 @@ def test_screening_claim_blocks_overlap_and_recovers_expired_lease():
     assert repo.claim_for_screen("c") is not None
 
 
+def test_failed_rule_retry_respects_cooldown():
+    repo = InMemoryRepository()
+    candidate = Candidate('retry', 'x', 'AI contest', BASE, '', 'contest', status=Status.COMPETITION_PENDING_SCREEN,
+                          competition={'retry_after': (datetime.now(UTC) + timedelta(hours=4)).isoformat()})
+    repo.save(candidate)
+    assert repo.claim_for_screen('retry') is None
+    candidate.competition['retry_after'] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    assert repo.claim_for_screen('retry') is not None
+
+
+def test_curated_sources_survive_an_empty_listing_without_claiming_to_be_fetched():
+    source = AnnouncementSource((), HOSTS, seed_pages=(('AI image contest', BASE + 'rules'),))
+    rows, errors = asyncio.run(source.discover())
+    assert len(rows) == 1 and errors == 0
+    assert rows[0].search_term == 'announcement:curated'
+    assert source.last_report == []
+
+
+def test_curated_rule_source_is_not_starved_by_ai_titles():
+    workflow, _, _, _ = make_workflow()
+    workflow.competition_screen_limit = 1
+    class Source:
+        async def discover(self):
+            return [Candidate('film', 'x', 'AI Film Festival', BASE + 'film', '', 'announcement:' + BASE),
+                    Candidate('curated', 'x', 'The Post-Meaning Prize', BASE + 'rules', '', 'announcement:curated')], 0
+    calls = []
+    class Screener:
+        hosts = HOSTS
+        async def screen(self, candidate):
+            calls.append(candidate.permalink)
+            candidate.competition = {'decision': 'pending', 'facts': {'prize': {'quote': 'A cash award is offered.'}}, 'sources': [candidate.permalink]}
+    workflow.announcement_source, workflow.competition_screener = Source(), Screener()
+    run_immediate(workflow.discover(()))
+    assert calls == [BASE + 'rules']
+
+
 def test_detached_firestore_style_records_are_delivered_after_screening():
     class DetachedRepo(InMemoryRepository):
         def get(self, key):

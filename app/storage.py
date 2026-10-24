@@ -9,6 +9,14 @@ from app.models import Candidate
 
 def screen_claimable(candidate: Candidate) -> bool:
     if candidate.status == "competition_pending_screen":
+        retry_after = candidate.competition.get('retry_after')
+        if retry_after:
+            try:
+                due = datetime.fromisoformat(retry_after)
+                if not due.tzinfo or due > datetime.now(UTC):
+                    return False
+            except (ValueError, TypeError):
+                return False
         return True
     if candidate.status != "competition_screening":
         return False

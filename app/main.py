@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from app.config import Settings
+from app.config import Settings, DEFAULT_COMPETITION_SEEDS
 from app.competitions import CompetitionScreener
 from app.announcements import AnnouncementSource
 from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
@@ -44,7 +44,8 @@ def build_workflow(settings: Settings) -> Workflow:
         max_cards=settings.telegram_max_cards_per_run,
         competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts),
         competition_screen_limit=settings.competition_screen_limit,
-        announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts),
+        announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts,
+                                               seed_pages=DEFAULT_COMPETITION_SEEDS if settings.announcement_source_urls else ()),
     )
 
 
@@ -82,6 +83,7 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             "competition_discovery_enabled": bool(settings.competition_search_terms),
             "competition_screen_limit": settings.competition_screen_limit,
             "announcement_sources_configured": len(settings.announcement_source_urls),
+            'competition_seed_sources_configured': len(DEFAULT_COMPETITION_SEEDS) if settings.announcement_source_urls else 0,
         }
 
     @api.post("/tasks/discover")

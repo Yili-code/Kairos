@@ -1,45 +1,94 @@
-# Competition recovery: three live rounds
+# Kairos：三輪修正、實抓與十項問題
 
-Date: 2026-10-24 (Asia/Taipei). Every round changes the implementation, reruns live retrieval and existing-provider analysis, and records ten evidence-backed remaining questions. Local round audits do not send Telegram messages or write Firestore. A final production check is reported separately. Unpublished organizer terms cannot be invented or resolved by contacting organizers without authorization.
+日期：2026-10-24（台灣時間）。每輪都先修改程式並通過測試，再重新連線抓取與使用既有模型分析。以下為本機端的真實網路與模型結果，正式環境另於 STATUS.md 記錄。
 
-## Round 1: retrieve and explain failures
+同一批競賽跨輪重抓，不能把線索數相加當成不同競賽；第三輪的 33 條包含兩個人工維護的來源種子。種子只是網址與標題，不含預填規則或合格判斷。未公開的主辦方條款保持未知，未對外聯繫、報名、付款或交件。
 
-Changes: bounded transient retries, validated HTTPS redirects, declared encodings, 1 MB rule-page bound and per-document status/attempt/byte receipts. Unsafe redirects remain blocked. Tests: 136 passed.
+## 第 1 輪：抓取與失敗診斷
 
-Live result: 31 listing leads, zero local listing errors; TKU returned one document and twelve quoted facts, Post-Meaning four documents and nine quoted facts; FilmFreeway returned HTTP 403. Neither analyzed contest passed all constraints. These local results do not establish cloud-egress success.
+加入有限次重試、安全 HTTPS 轉址、網頁編碼判讀與逐頁讀取紀錄。
 
-Ten remaining questions from the rerun:
+驗證：136 項測試通過；重新抓到 31 條線索，本機公告頁錯誤 0 次。
 
-1. AI ZONE: FilmFreeway refuses rule-page access (HTTP 403).
-2. Post-Meaning: complete attendance obligations lack quoted evidence.
-3. Post-Meaning: entrant-controlled public display rights lack quoted evidence.
-4. TKU: copyright and licensing terms lack quoted evidence.
-5. Post-Meaning: copyright and licensing terms lack quoted evidence.
-6. Post-Meaning: public winner recognition lacks quoted evidence.
-7. Post-Meaning: full deliverable specifications lack quoted evidence.
-8. TKU: estimated AI production share is below 90%; its interpretation needs scrutiny.
-9. Post-Meaning: estimated AI production share is below 90%; its interpretation needs scrutiny.
-10. AI ZONE: production share cannot be estimated without rules.
+| 核對樣本 | 讀取文件 | 結果 |
+|---|---:|---|
+| 書藝智生 | 1 | 不符初篩 |
+| Post-Meaning Prize | 4 | 不符初篩 |
+| AI ZONE | 0 | 待確認 |
 
-Additional findings: estimates treated human review as manual artifact production and claimed a bounded workflow despite unknown finalist obligations. Those are estimator defects, not organizer-confirmed exclusions. A university news article is incomplete evidence of the organizer's full terms.
+重新抓取後的十項優先問題：
 
-## Round 2: complete documents and make estimates auditable
+1. **AI ZONE**：規則頁讀取失敗：http_403。
+2. **Post-Meaning Prize**：完整出席義務尚無可用規則證據。
+3. **Post-Meaning Prize**：自行公開展示權尚無可用規則證據。
+4. **書藝智生**：著作權與授權尚無可用規則證據。
+5. **Post-Meaning Prize**：著作權與授權尚無可用規則證據。
+6. **Post-Meaning Prize**：公開得獎紀錄尚無可用規則證據。
+7. **Post-Meaning Prize**：完整交付規格尚無可用規則證據。
+8. **書藝智生**：AI 製作比例未達或尚未確認 90%。
+9. **Post-Meaning Prize**：AI 製作比例未達或尚未確認 90%。
+10. **AI ZONE**：AI 製作比例未達或尚未確認 90%。
 
-Changes: six-document review including FAQ/judging, 3 MB PDF retrieval with the existing twenty-page/text bounds, a verified TKU-related university notice and organizer-PDF link, artifact-component AI-share calculation, explicit human-only work, and semantic guards against equating online entry with no attendance or organizer exhibition with entrant rights. Uncertain estimates remain pending rather than confirmed exclusions; the eligibility thresholds are unchanged. Tests: 141 passed.
+另有 1 項相關未確認事項，完整規則與估算保留於本機稽核資料。
 
-Live result: 31 listing leads, zero local listing errors. TKU returned three documents including the 1,200,416-byte organizer PDF and six quoted facts; Post-Meaning returned six documents and eight quoted facts. Both remain pending; AI ZONE remains inaccessible. Fewer accepted facts reflect stricter validation and extraction instability, not necessarily fewer facts published.
+## 第 2 輪：完整規則與製作分工
 
-Ten remaining questions from the rerun:
+補讀六頁規則及 3 MB 內 PDF，連結已驗證的大學轉載簡章；按作品分項計算 AI 比例。不確定估算列待確認，六小時、90% 與 NT$300 的合格門檻不變。
 
-1. AI ZONE: its platform still returns HTTP 403.
-2. TKU: substantial AI permission was not retained as a grounded fact.
-3. TKU: complete attendance obligations remain unconfirmed.
-4. Post-Meaning: complete attendance obligations remain unconfirmed.
-5. TKU: entrant-controlled public display rights remain unconfirmed.
-6. Post-Meaning: entrant-controlled public display rights remain unconfirmed.
-7. TKU: copyright and licensing terms remain unconfirmed.
-8. Post-Meaning: copyright and licensing terms remain unconfirmed.
-9. TKU: registration fees remain unconfirmed.
-10. Post-Meaning: complete deliverable specifications remain unconfirmed.
+驗證：141 項測試通過；重新抓到 31 條線索，本機公告頁錯誤 0 次。
 
-Additional findings: copied PDF quotations can lose provenance through CJK typography/spacing; model output also attributed human-only writing to Post-Meaning without supporting text. Those require validation rather than filling gaps with assumptions.
+| 核對樣本 | 讀取文件 | 結果 |
+|---|---:|---|
+| 書藝智生 | 3 | 待確認 |
+| Post-Meaning Prize | 6 | 待確認 |
+| AI ZONE | 0 | 待確認 |
+
+重新抓取後的十項優先問題：
+
+1. **AI ZONE**：規則頁讀取失敗：http_403。
+2. **書藝智生**：大量 AI 製作許可尚無可用規則證據。
+3. **書藝智生**：完整出席義務尚無可用規則證據。
+4. **Post-Meaning Prize**：完整出席義務尚無可用規則證據。
+5. **書藝智生**：自行公開展示權尚無可用規則證據。
+6. **Post-Meaning Prize**：自行公開展示權尚無可用規則證據。
+7. **書藝智生**：著作權與授權尚無可用規則證據。
+8. **Post-Meaning Prize**：著作權與授權尚無可用規則證據。
+9. **書藝智生**：報名費尚無可用規則證據。
+10. **Post-Meaning Prize**：完整交付規格尚無可用規則證據。
+
+另有 7 項相關未確認事項，完整規則與估算保留於本機稽核資料。
+
+## 第 3 輪：原文證據與後續重試
+
+改由模型選取原文片段編號，程式恢復引文與網址；接受等價編碼的 PDF 網址及純排版差異。人工限定項目必須附規則證據；不補猜截止時間、時區或免費報名。讀取失敗排入有冷卻時間的重試，且同輪不重複分析。加入兩個人工維護的公開規則種子與具體核對問題。
+
+驗證：153 項測試通過；重新抓到 33 條線索，本機公告頁錯誤 0 次。
+
+| 核對樣本 | 讀取文件 | 結果 |
+|---|---:|---|
+| 書藝智生 | 3 | 待確認 |
+| Post-Meaning Prize | 6 | 待確認 |
+| AI ZONE | 0 | 待確認 |
+
+重新抓取後的十項優先問題：
+
+1. **AI ZONE**：規則頁讀取失敗：http_403。
+2. **書藝智生**：完整出席義務尚無可用規則證據。
+3. **Post-Meaning Prize**：完整出席義務尚無可用規則證據。
+4. **書藝智生**：自行公開展示權尚無可用規則證據。
+5. **Post-Meaning Prize**：自行公開展示權尚無可用規則證據。
+6. **Post-Meaning Prize**：著作權與授權尚無可用規則證據。
+7. **書藝智生**：完整截止時間及時區尚無可用規則證據。
+8. **書藝智生**：報名費尚無可用規則證據。
+9. **書藝智生**：AI 製作比例未達或尚未確認 90%。
+10. **書藝智生**：時間、工具額度或完整製作計畫仍不確定。
+
+另有 4 項相關未確認事項，完整規則與估算保留於本機稽核資料。
+
+## 已確認的進展與限制
+
+- 已讀到淡江實際主辦簡章（1,200,416 bytes），其中有得獎作品圖文使用權讓與主辦單位的條款；「授權完全沒有資料」已修正。這不等於參賽者保有自行公開展示權。
+- Post-Meaning 的公開得獎紀錄、線上交件與參賽資格已取得可引用來源。其授權及完整出席義務仍未確認。
+- 原本未證實的人工寫作限制與過度精確的截止時間，不再用來判定合格。未測量的耗時與 AI 比例始終是估算。
+- FilmFreeway 仍拒絕存取；沒有繞過驗證或把目錄介紹當成主辦規則。
+- 三輪均未建立完全符合全部門檻的樣本。程式可修正抓取、證據保存與錯誤分類，但不能替主辦方補寫缺漏條款。

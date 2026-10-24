@@ -103,8 +103,14 @@ class TelegramClient:
         else:
             lines.extend([f"AI 估算：{time_text}｜AI 製作 {share_text}｜額外工具 {cost_text}"])
         lines.append("你的上限：6 小時／工具 NT$300；優先使用現有 ChatGPT 額度")
-        if estimate.get("plan"):
+        if estimate.get('component_rule_issues'):
+            lines.append('分工含未核實的人工限制，暫不採信這份製作計畫。')
+        elif estimate.get("plan"):
             lines.append("估算依據：" + escaped_clip(estimate["plan"], 160))
+        components = estimate.get('production_components', [])
+        if components:
+            lines.append('估算分工：' + '；'.join(
+                escaped_clip(part['name'], 25) + f'（AI {part["ai_fraction"]:.0%}）' for part in components[:3]))
 
         labels = {
             "deliverables": "交付", "submission": "交件方式", "ai_policy": "AI 使用",
@@ -126,7 +132,12 @@ class TelegramClient:
             lines.append(f"\n<b>{heading}</b>\n" + "\n".join("• " + escaped_clip(item, 90) for item in report["blockers"][:4]))
             if len(report["blockers"]) > 4:
                 lines.append(f"另有 {len(report['blockers']) - 4} 項限制待核對，請查看來源。")
-        sources = report.get("sources", [])
+        questions = report.get('verification_questions', [])
+        if questions and report.get('sources'):
+            lines.append('\n<b>核對重點</b>\n' + '\n'.join(
+                '• ' + escaped_clip(item['question'], 65) for item in questions[:2]))
+        sources = sorted(report.get("sources", []), key=lambda url: (
+            0 if '.pdf' in url.lower() else 1 if '/terms' in url.lower() else 2))
         if sources:
             lines.append("\n" + " · ".join(
                 f'<a href="{html.escape(url, quote=True)}">規則來源 {i + 1}</a>' for i, url in enumerate(sources[:2])

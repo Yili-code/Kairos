@@ -83,14 +83,20 @@ def entries(body: str, base: str, hosts: tuple[str, ...]) -> list[Candidate]:
 
 
 class AnnouncementSource:
-    def __init__(self, urls: tuple[str, ...], hosts: tuple[str, ...], *, transport=None):
+    def __init__(self, urls: tuple[str, ...], hosts: tuple[str, ...], *, transport=None, seed_pages=()):
         self.urls = urls
         self.hosts = hosts
         self.transport = transport
+        self.seed_pages = seed_pages
         self.last_report: list[dict] = []
 
     async def discover(self) -> tuple[list[Candidate], int]:
         candidates, errors = {}, 0
+        for title, url in self.seed_pages:
+            if allowed_url(url, self.hosts):
+                candidate_id = 'notice-' + hashlib.sha256(url.encode()).hexdigest()[:24]
+                candidates[url] = Candidate(candidate_id, 'curated_public_source', title + '\n' + url,
+                                            url, '', 'announcement:curated', category='ai_competition')
         self.last_report = []
         batch_count = max(1, (len(self.urls) + 11) // 12)
         start = (int(time.time()) // 43200 % batch_count) * 12
