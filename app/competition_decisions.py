@@ -4,7 +4,9 @@ from __future__ import annotations
 import calendar
 from datetime import datetime, timedelta, timezone
 import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+import httpx
 
 
 UNKNOWN = {'value': 'unknown', 'quote': '', 'url': ''}
@@ -130,3 +132,13 @@ def validate_eligibility(fact, profile):
     if not unrestricted and re.search(r'國籍|citizenship|nationality|\bcitizens\b|passport',quote,re.I) and not profile.get('citizenship'):
         return {**fact,'value':'unknown'},'citizenship_requires_confirmation'
     return fact,None
+
+
+def recommendation_identity(candidate):
+    try:
+        parsed = urlsplit(str(httpx.URL(candidate.permalink)))
+        url = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,urlencode(sorted(parse_qsl(parsed.query))),''))
+    except (ValueError,httpx.InvalidURL):
+        url = 'candidate:' + candidate.id
+    deadline = candidate.competition.get('facts',{}).get('deadline',{}).get('value','unknown')
+    return url,deadline

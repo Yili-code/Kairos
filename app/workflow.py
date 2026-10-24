@@ -9,6 +9,7 @@ from typing import Any
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls
+from app.competition_decisions import recommendation_identity
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
@@ -168,6 +169,10 @@ class Workflow:
             reverse=True,
         )
         shortlist = []
+        duplicate_cards_suppressed = 0
+        seen_contests = {recommendation_identity(item) for item in self.repository.find_by_status(
+            [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN], limit=100) if item.category == 'ai_competition'}
+        selected_contests = set()
         pending_selected = False
         for candidate in ranked:
             if candidate.category == "ai_competition":
@@ -182,12 +187,24 @@ class Workflow:
                     candidate.status = Status.SKIPPED
                     self.repository.save(candidate)
                     continue
+            if candidate.category == 'ai_competition':
+                identity = recommendation_identity(candidate)
+                if identity in seen_contests:
+                    candidate.status = Status.SKIPPED
+                    self.repository.save(candidate)
+                    duplicate_cards_suppressed += 1
+                    continue
+                if identity in selected_contests:
+                    duplicate_cards_suppressed += 1
+                    continue
             pending = candidate.category == "ai_competition" and candidate.competition.get("decision") == "pending"
             if pending and pending_selected:
                 continue
             if len(shortlist) >= self.max_cards:
                 break
             shortlist.append(candidate)
+            if candidate.category == 'ai_competition':
+                selected_contests.add(recommendation_identity(candidate))
             pending_selected = pending_selected or pending
         sent = 0
         card_errors = 0
@@ -214,6 +231,7 @@ class Workflow:
             "card_errors": card_errors,
             "search_errors": errors,
             "competitions_screened": screened,
+            "duplicate_competition_cards_suppressed": duplicate_cards_suppressed,
             "competition_fetch_attempts": competition_attempts,
             "competition_errors": competition_errors,
             "competition_source_errors": competition_source_errors,
