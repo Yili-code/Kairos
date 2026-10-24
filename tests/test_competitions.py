@@ -554,6 +554,14 @@ def test_unknown_fields_are_grouped_and_blockers_do_not_flood_the_card():
     assert "尚無可靠的耗時" in text
 
 
+def test_free_form_plan_cannot_publish_invented_profile_or_rule_claims():
+    raw = valid_report()
+    raw['estimate']['plan'] = 'The entrant studies at an invented university and owns a paid tool.'
+    text = capture_card(evaluate(raw, SOURCES, now=NOW))
+    assert 'invented university' not in text and 'owns a paid tool' not in text
+    assert '流程估算：' in text
+
+
 def test_paid_registration_stays_separate_from_estimated_tool_cost():
     raw = valid_report()
     raw["facts"]["registration_fee"]["value"] = "paid"

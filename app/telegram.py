@@ -105,8 +105,14 @@ class TelegramClient:
         lines.append("你的上限：6 小時／工具 NT$300；優先使用現有 ChatGPT 額度")
         if estimate.get('component_rule_issues'):
             lines.append('分工含未核實的人工限制，暫不採信這份製作計畫。')
-        elif estimate.get("plan"):
-            lines.append("估算依據：" + escaped_clip(estimate["plan"], 160))
+        elif estimate.get('plan'):
+            stages = (('planning', '規劃'), ('generation_wait', '生成等待'), ('review', '審查'),
+                      ('submission', '交件'), ('finals', '後續'))
+            lines.append('流程估算：' + '／'.join(
+                label + (f'{estimate[key]:g}h' if isinstance(estimate.get(key), (int, float)) else '未知')
+                for key, label in stages))
+            if value('attendance') == 'unknown':
+                lines.append('後續出席義務尚未確認，流程估算仍不完整。')
         components = estimate.get('production_components', [])
         if components:
             lines.append('估算分工：' + '；'.join(
