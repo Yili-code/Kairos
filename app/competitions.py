@@ -42,6 +42,10 @@ FACTS = {
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
 TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
 MAX_RULE_DOCUMENTS = 6
+RULE_LINK = re.compile(
+    r"/(?:[a-z0-9]+-)*(?:rules|regulations|terms|timeline|application|enter|faq|guidelines|judging)(?:[-/.?#]|$)",
+    re.I,
+)
 
 
 class PageText(HTMLParser):
@@ -57,7 +61,7 @@ class PageText(HTMLParser):
             href = dict(attrs).get("href") or ""
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
-            elif re.search(r"/(?:rules|terms|timeline|enter|faq|guidelines|judging)(?:[/.?#]|$)", href, re.I):
+            elif RULE_LINK.search(href):
                 self.rule_links.append(href)
         if tag in {"script", "style", "noscript"}:
             self.hidden += 1
@@ -158,7 +162,7 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
         query = dict(pairs)
         unique_query = len({key.lower() for key, _ in pairs}) == len(pairs)
         public_navigation = all(
-            key.lower() in {"lang", "id", "n", "s", "no", "dm_no", "np_no", "module", "serno", "page", "paged", "offset", "start"}
+            key.lower() in {"lang", "hslang", "id", "n", "s", "no", "dm_no", "np_no", "module", "serno", "page", "paged", "offset", "start"}
             and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value)
             and (key.lower() not in {"page", "paged", "offset", "start"} or bool(re.fullmatch(r"[0-9]{1,6}", value)))
             for key, value in query.items()
@@ -276,10 +280,15 @@ class CompetitionScreener:
                 if page:
                     sources[fetched.url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
-                    (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq", "judging"))
-                     if re.search(r"/" + name + r"(?:[/.?#]|$)", href, re.I)), 99))
+                    (i for i, name in enumerate(("rules", "regulations", "terms", "timeline", "application", "enter", "guidelines", "faq", "judging"))
+                     if re.search(r"(?:/|-)" + name + r"(?:[-/.?#]|$)", href, re.I)), 99))
                 for href in parser.attachments + rule_links:
                     attachment = urljoin(fetched.url, href)
+                    # Remove analytics only; preserve locale and reject all other unknown parameters.
+                    parsed = urlsplit(attachment)
+                    query = '&'.join(pair for pair in parsed.query.split('&')
+                                     if not pair.split('=', 1)[0].lower().startswith('utm_'))
+                    attachment = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
                     if len(pending) < MAX_RULE_DOCUMENTS and attachment not in pending and allowed_url(attachment, self.hosts):
                         pending.append(attachment)
 
