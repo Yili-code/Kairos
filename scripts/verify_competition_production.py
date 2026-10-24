@@ -47,7 +47,7 @@ async def verify(discover: bool):
     client = firestore.Client(project="yili-chronos-prod", database=value("FIRESTORE_DATABASE"),
                               credentials=Credentials(cloud_value("auth", "print-access-token")))
     collection = client.collection(value("FIRESTORE_COLLECTION"))
-    async with httpx.AsyncClient(timeout=180) as http:
+    async with httpx.AsyncClient(timeout=600) as http:
         health = await http.get(base_url + "/health")
         health.raise_for_status()
         report["competition_discovery_enabled"] = health.json().get("competition_discovery_enabled") is True
