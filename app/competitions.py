@@ -293,11 +293,13 @@ class CompetitionScreener:
                         pending.append(attachment)
 
 
-    async def screen(self, candidate: Candidate) -> Candidate:
+    async def screen(self, candidate: Candidate, *, model_budget=None) -> Candidate:
         previous = candidate.competition
         sources = await self.sources(candidate.text)
         hashes = {url: hashlib.sha256(page.encode()).hexdigest() for url, page in sources.items()}
         try:
+            if sources and model_budget is not None and not model_budget():
+                raise RuntimeError('Per-scan model budget exhausted')
             raw = await self.llm.screen_competition(candidate, sources) if sources else {}
             if (sources and previous.get('source_hashes') == hashes
                     and previous.get('context_hash') == evaluation_context(PROFILE)

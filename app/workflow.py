@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.dm_sender import DMUnavailable, DMSenderError
-from app.competitions import allowed_url, rules_urls
+from app.competitions import allowed_url, rules_urls, CompetitionScreener
 from app.competition_decisions import recommendation_identity, assessment_current
 from app.profile import PROFILE
 from app.llm import GeminiClient
@@ -70,7 +70,13 @@ class Workflow:
         candidate_errors = 0
         rule_fetch_errors = 0
         model_rate_limited = False
+        model_evaluations_attempted = 0
         search_halted = False
+        def take_model_slot():
+            nonlocal model_evaluations_attempted
+            if model_evaluations_attempted >= self.competition_screen_limit:return False
+            model_evaluations_attempted += 1
+            return True
         recovered_cards = 0
         for stuck in self.repository.find_by_status([Status.TELEGRAM_SENDING], limit=100):
             try:
@@ -124,7 +130,10 @@ class Workflow:
                     return
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
-                await self.competition_screener.screen(candidate)
+                if isinstance(self.competition_screener, CompetitionScreener):
+                    await self.competition_screener.screen(candidate, model_budget=take_model_slot)
+                else:
+                    await self.competition_screener.screen(candidate)
                 model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
                 rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
                 if candidate.competition.get("sources"):
@@ -253,6 +262,7 @@ class Workflow:
             'candidate_errors': candidate_errors,
             'competition_rule_fetch_errors': rule_fetch_errors,
             'model_rate_limited': int(model_rate_limited),
+            'model_evaluations_attempted': model_evaluations_attempted,
             'search_halted': int(search_halted),
             'card_uncertain_recovered': recovered_cards,
             "discovered": len(created),
