@@ -30,6 +30,7 @@ FACTS = {
     "deliverables": None,
 }
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
+TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
 
 
 class PageText(HTMLParser):
@@ -114,7 +115,7 @@ class CompetitionScreener:
                     parser.feed(bytes(body).decode("utf-8", errors="replace"))
                     page = normalize(" ".join(parser.parts))
                     if page:
-                        sources[url] = page[:32_000]
+                        sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
                 except (httpx.HTTPError, ValueError):
                     continue
         return sources
@@ -171,6 +172,8 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         return facts[name]["value"]
 
     blockers, rejected = [], []
+    if any(TRUNCATED_MARKER in page for page in sources.values()):
+        blockers.append("規則頁面過長而截斷，完整條款尚未核對")
     if value("ai_policy") in {"limited", "prohibited"}:
         rejected.append("AI 使用限制不符合大量 AI 製作需求")
     elif value("ai_policy") != "broad_allowed":

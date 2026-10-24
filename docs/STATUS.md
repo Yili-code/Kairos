@@ -11,7 +11,7 @@ Verification date: 2026-10-24 (Asia/Taipei). This file records pre-rollout evide
 
 ## Competition feature validation
 
-- Python 3.12 local validation: **111 tests passed**. Coverage includes official-quote provenance, hard policy limits, unknown facts, deadline timezone and expiry, cash versus noncash prizes, separate registration fees, bounded requests and screen count, event deduplication, durable card queue, atomic card claims, unsafe links, oversized rules, Unicode card limits, and blocked contest outreach paths.
+- Python 3.12 local validation: **112 tests passed**. Coverage includes official-quote provenance, hard policy limits, unknown facts, deadline timezone and expiry, cash versus noncash prizes, separate registration fees, bounded requests and screen count, event deduplication, durable card queue, atomic card claims, unsafe links, oversized or truncated rules, Unicode card limits, and blocked contest outreach paths.
 - Compilation succeeded for application, scripts and tests.
 - A read-only real-rule/model check against `https://hackthenet2026.devpost.com/rules` fetched one official page and validated nine evidenced facts. The report rejected the entry, including AI-use, eligibility, deadline, and workload conflicts. This was an integration sample, not a recommended contest.
 - The configured primary model returned a transient HTTP 503 during validation. Competition analysis now uses the existing configured fallback on transient failures, with one attempt per model. The configured models were not changed.

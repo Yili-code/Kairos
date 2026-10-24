@@ -7,7 +7,7 @@ import html
 import httpx
 import pytest
 
-from app.competitions import CompetitionScreener, allowed_url, evaluate, rules_urls, screening_prompt
+from app.competitions import CompetitionScreener, TRUNCATED_MARKER, allowed_url, evaluate, rules_urls, screening_prompt
 from app.models import Candidate, Status
 from app.scoring import score_post
 from app.telegram import TelegramClient
@@ -362,3 +362,10 @@ def test_long_unicode_rules_card_stays_within_telegram_utf16_limit():
     run_immediate(client.send_candidate(candidate))
     visible = html.unescape(re.sub(r"<[^>]+>", "", client.payload["text"]))
     assert len(visible.encode("utf-16-le")) // 2 < 4096
+
+
+def test_truncated_rules_cannot_hide_later_restrictions_and_become_eligible():
+    sources = {URL: QUOTE + "\n" + TRUNCATED_MARKER}
+    report = evaluate(valid_report(), sources, now=NOW)
+    assert report["decision"] == "pending"
+    assert any("截斷" in blocker for blocker in report["blockers"])
