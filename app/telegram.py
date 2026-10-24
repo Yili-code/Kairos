@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -60,57 +62,78 @@ class TelegramClient:
     async def send_competition(self, candidate: Candidate) -> int:
         report = candidate.competition
         facts, estimate = report.get("facts", {}), report.get("estimate", {})
-        labels = {
-            "deadline": "截止", "prize": "現金獎金／得獎紀錄", "registration_fee": "報名費",
-            "registration_amount": "報名費金額",
-            "submission": "交件", "ai_policy": "AI 規則", "attendance": "出席／答辯",
-            "eligibility": "參賽資格", "publicity": "公開展示", "rights": "著作權／授權",
-            "deliverables": "交付內容",
-            "participation": "參賽人數／獎項名額依據",
-        }
         values = {
-            "unknown": "待確認", "free": "免費", "paid": "付費，需你另行決定",
+            "unknown": "未確認", "free": "免費", "paid": "付費，金額未確認",
             "online": "線上", "offline": "實體", "broad_allowed": "允許大量 AI 製作",
             "limited": "僅限部分 AI 輔助", "prohibited": "禁止", "none": "無須出席或答辯",
             "online_final": "入圍後線上答辯", "onsite": "需實體出席", "eligible": "符合資格",
             "ineligible": "不符資格", "allowed": "允許",
         }
-        status = "符合篩選（含 AI 估算）" if report.get("decision") == "eligible" else "待確認候選"
-        lines = [f"<b>AI 協作線上競賽 · {status}</b>", escaped_clip(candidate.text, 200), ""]
-        if report.get("discovery_signal"):
-            lines.append(escaped_clip(report["discovery_signal"], 80))
-        for key, label in labels.items():
-            fact = facts.get(key, {})
-            value = str(fact.get("value", "unknown"))
-            lines.append(f"<b>{label}</b>：{escaped_clip(values.get(value, value), 180)}")
-            if key in {"ai_policy", "registration_fee"} and fact.get("quote"):
-                lines.append(f"依據：{escaped_clip(fact['quote'], 160)}")
+        def value(key):
+            return str(facts.get(key, {}).get("value") or "unknown")
+
+        def display(key, limit=140):
+            raw = value(key)
+            return escaped_clip(values.get(raw, raw), limit)
+
+        title_lines = re.sub(r"https?://\S+", "", candidate.text).splitlines()
+        title = next((line.strip() for line in title_lines if line.strip()), "競賽資訊（名稱待確認）")
+        status = {
+            "eligible": "初篩符合｜報名前核對完整規則",
+            "rejected": "不符合條件｜建議略過",
+        }.get(report.get("decision"), "待確認｜尚未確認適合投入")
+        deadline = display("deadline")
+        try:
+            closing = datetime.fromisoformat(value("deadline").replace("Z", "+00:00"))
+            if closing.tzinfo:
+                deadline = closing.astimezone(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M") + "（台灣）"
+        except ValueError:
+            pass
+        fee = display("registration_amount") if value("registration_fee") == "paid" and value("registration_amount") != "unknown" else display("registration_fee")
+        if value("registration_fee") == "paid":
+            fee += "（報名前由你決定）"
+        lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>回報與投入</b>",
+                 f"獎金：{display('prize')}", f"截止：{deadline}", f"報名費：{fee}"]
         hours, cost, share = estimate.get("total_hours"), estimate.get("extra_tools_twd"), estimate.get("ai_share")
         time_text = f"{hours:g} 小時" if hours is not None else "未知"
         cost_text = f"NT${cost:g}" if cost is not None else "未知"
         share_text = f"{share:.0%}" if share is not None else "未知"
-        lines.extend([
-            "", "<b>AI 估算，非實測／非主辦方承諾</b>",
-            f"完整流程：{time_text}（上限 6 小時，含等待與答辯）",
-            f"AI 製作比例：{share_text}；額外工具：{cost_text}（上限 NT$300）",
-            "報名費另計；優先使用現有 ChatGPT 額度。",
-        ])
-        stage_labels = {"planning": "選題", "generation_wait": "生成等待", "review": "修改驗收",
-                        "submission": "交件", "finals": "後續答辯"}
-        stages = [f"{label} {estimate[key]:g}h" for key, label in stage_labels.items() if estimate.get(key) is not None]
-        if stages:
-            lines.append("／".join(stages))
+        if all(item is None for item in (hours, cost, share)):
+            lines.append("AI 估算：尚無可靠的耗時、製作比例與工具費估算")
+        else:
+            lines.extend([f"AI 估算：{time_text}｜AI 製作 {share_text}｜額外工具 {cost_text}"])
+        lines.append("你的上限：6 小時／工具 NT$300；優先使用現有 ChatGPT 額度")
         if estimate.get("plan"):
-            lines.append(escaped_clip(estimate["plan"], 200))
+            lines.append("估算依據：" + escaped_clip(estimate["plan"], 160))
+
+        labels = {
+            "deliverables": "交付", "submission": "交件方式", "ai_policy": "AI 使用",
+            "attendance": "答辯／出席", "eligibility": "參賽資格", "publicity": "公開展示",
+            "rights": "作品授權", "participation": "參賽人數／名額",
+        }
+        known = [key for key in labels if value(key) != "unknown"]
+        unknown = [labels[key] for key in labels if value(key) == "unknown"]
+        lines.extend(["", "<b>交件與規則</b>"])
+        for key in known:
+            lines.append(f"{labels[key]}：{display(key)}")
+        if unknown:
+            lines.append("待補：" + "、".join(unknown))
+        ai_quote = facts.get("ai_policy", {}).get("quote")
+        if value("ai_policy") != "unknown" and ai_quote:
+            lines.append(f"<i>AI 規則摘錄：{escaped_clip(ai_quote, 140)}</i>")
         if report.get("blockers"):
-            lines.append("\n<b>尚待確認</b>\n" + "\n".join("• " + escaped_clip(item, 80) for item in report["blockers"][:5]))
+            heading = "不符合的原因" if report.get("decision") == "rejected" else "決策前先確認"
+            lines.append(f"\n<b>{heading}</b>\n" + "\n".join("• " + escaped_clip(item, 90) for item in report["blockers"][:4]))
+            if len(report["blockers"]) > 4:
+                lines.append(f"另有 {len(report['blockers']) - 4} 項限制待核對，請查看來源。")
         sources = report.get("sources", [])
         if sources:
-            lines.append("\n<b>規則來源</b>：" + " · ".join(
-                f'<a href="{html.escape(url, quote=True)}">來源 {i + 1}</a>' for i, url in enumerate(sources[:2])
+            lines.append("\n" + " · ".join(
+                f'<a href="{html.escape(url, quote=True)}">規則來源 {i + 1}</a>' for i, url in enumerate(sources[:2])
             ))
         else:
-            lines.append("\n尚未取得可核對的主辦方規則；此卡不表示符合參賽條件。")
+            lines.append("\n尚無可核對的規則來源，不能判定符合條件。")
+        lines.append("<i>耗時含 AI 等待、修改、交件及答辯；估算非實測，不代表得獎機率。報名費另計。</i>")
         result = await self.call("sendMessage", {
             "chat_id": self.owner_chat_id, "text": "\n".join(lines), "parse_mode": "HTML",
             "disable_web_page_preview": True,

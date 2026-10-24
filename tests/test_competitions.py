@@ -373,3 +373,51 @@ def test_truncated_rules_cannot_hide_later_restrictions_and_become_eligible():
     report = evaluate(valid_report(), sources, now=NOW)
     assert report["decision"] == "pending"
     assert any("截斷" in blocker for blocker in report["blockers"])
+
+
+def capture_card(report, text="AI 影片徵件\nhttps://sample.devpost.com/rules"):
+    class Capture(TelegramClient):
+        async def call(self, method, payload):
+            self.payload = payload
+            return {"message_id": 1}
+
+    candidate = Candidate("c", "x", text, URL, "", "contest", category="ai_competition", competition=report)
+    client = Capture("not-a-token", 42)
+    run_immediate(client.send_candidate(candidate))
+    return client.payload["text"]
+
+
+def test_card_leads_with_title_and_decision_then_reward_and_cost():
+    text = capture_card(evaluate(valid_report(), SOURCES, now=NOW))
+    assert text.startswith("<b>AI 影片徵件</b>\n初篩符合")
+    assert text.index("獎金：") < text.index("AI 估算：") < text.index("交件與規則")
+    assert "2026/12/01 23:59（台灣）" in text
+    assert "報名費：免費" in text and "報名費金額" not in text
+    assert "https://sample.devpost.com/rules\n" not in text
+
+
+def test_unknown_fields_are_grouped_and_blockers_do_not_flood_the_card():
+    report = evaluate({}, {}, now=NOW)
+    text = capture_card(report, "https://sample.devpost.com/rules")
+    assert text.startswith("<b>競賽資訊（名稱待確認）</b>\n待確認")
+    assert "待補：交付、交件方式、AI 使用" in text
+    assert text.count("• ") == 4
+    assert f"另有 {len(report['blockers']) - 4} 項限制" in text
+    assert "尚無可靠的耗時" in text
+
+
+def test_paid_registration_stays_separate_from_estimated_tool_cost():
+    raw = valid_report()
+    raw["facts"]["registration_fee"]["value"] = "paid"
+    raw["facts"]["registration_amount"]["value"] = "US$50"
+    text = capture_card(evaluate(raw, SOURCES, now=NOW))
+    assert "報名費：US$50（報名前由你決定）" in text
+    assert "額外工具 NT$0" in text
+
+
+def test_rejected_report_is_never_labeled_pending_or_eligible():
+    raw = valid_report()
+    raw["facts"]["ai_policy"]["value"] = "prohibited"
+    text = capture_card(evaluate(raw, SOURCES, now=NOW))
+    assert "不符合條件｜建議略過" in text and "不符合的原因" in text
+    assert "初篩符合" not in text and "尚未確認適合投入" not in text

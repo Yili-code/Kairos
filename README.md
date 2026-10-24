@@ -45,6 +45,8 @@ Rules are fetched only from configured HTTPS hosts. Defaults include Devpost, Ka
 
 Send `/competition https://event.devpost.com/rules` in Telegram to request a fresh review or recheck a known event. This command may update its assessment and send a card; it does not draft contact messages. Competition cards have only source and skip buttons. All competition callbacks and direct-send paths reject outreach, registration, payment, and submission.
 
+Cards lead with the event name and decision, followed by cash prizes, a Taiwan-time deadline, registration fees and clearly labeled AI estimates. Known entry rules remain visible; unknown fields are grouped instead of repeated, and the first four blockers plus the remaining count keep incomplete assessments readable. Source quotes/links and the distinction between registration fees, tool costs and unverified winning odds are preserved.
+
 Cloud Run continues to use the existing Gemini API configuration for screening. **ChatGPT subscription quota is not API credit** and is not called by the server; the subscription preference concerns making contest entries, not replacing Kairos's existing model backend. No new paid service is required by this feature.
 
 | Optional variable | Default / meaning |
