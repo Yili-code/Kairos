@@ -104,3 +104,39 @@ def test_state_failure_does_not_bypass_rate_limit_protection():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             return await PublicFetcher(FailedState())(client,URL,ALLOWED)
     assert asyncio.run(run()).status == 'fetch_state_unavailable'
+
+
+def test_expired_cooldown_and_expired_cache_allow_a_fresh_request():
+    async def run():
+        state,now,calls = MemoryFetchState(), [1000], []
+        def handler(request):
+            calls.append(request)
+            if len(calls)==1:
+                return httpx.Response(429,headers={'retry-after':'60'})
+            return httpx.Response(200,headers={'content-type':'text/html','cache-control':'public,max-age=10'},text='Fresh rules')
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            fetcher=PublicFetcher(state,clock=lambda:now[0],spacing=0)
+            await fetcher(client,URL,ALLOWED)
+            now[0]=1061
+            assert (await fetcher(client,URL,ALLOWED)).status=='ok'
+            now[0]=1062
+            assert (await fetcher(client,URL,ALLOWED)).from_cache
+            now[0]=1072
+            assert not (await fetcher(client,URL,ALLOWED)).from_cache
+        assert len(calls)==3
+    asyncio.run(run())
+
+
+def test_separate_requests_to_one_origin_are_paced_even_after_lease_release():
+    import time
+    async def run():
+        calls=[]
+        def handler(request):
+            calls.append(time.monotonic())
+            return httpx.Response(200,headers={'content-type':'text/html','cache-control':'no-store'},text='Rules')
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            fetcher=PublicFetcher(spacing=.02)
+            await fetcher(client,URL,ALLOWED)
+            await fetcher(client,URL+'/next',ALLOWED)
+        assert len(calls)==2 and calls[1]-calls[0]>=.018
+    asyncio.run(run())
