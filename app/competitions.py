@@ -19,7 +19,7 @@ import httpx
 from app.models import Candidate
 from app.public_fetch import fetch_public
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights
 from app.profile import PROFILE
 
 
@@ -374,6 +374,10 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     facts['eligibility'], eligibility_issue = validate_eligibility(facts['eligibility'], PROFILE)
     if eligibility_issue:
         diagnostics['eligibility'] = eligibility_issue
+
+    facts['rights'], recovered_rights = recover_explicit_rights(facts['rights'], sources)
+    if recovered_rights:
+        diagnostics['rights'] = 'recovered_explicit_entrant_license_clause'
 
     # Online submission and organizer exhibition do not establish these entrant rights.
     attendance = facts['attendance']

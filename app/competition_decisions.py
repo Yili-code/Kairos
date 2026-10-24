@@ -142,3 +142,18 @@ def recommendation_identity(candidate):
         url = 'candidate:' + candidate.id
     deadline = candidate.competition.get('facts',{}).get('deadline',{}).get('value','unknown')
     return url,deadline
+
+
+def recover_explicit_rights(fact, sources):
+    """Recover a literal entrant/winner clause, not a legal interpretation."""
+    if fact['value'] != 'unknown':
+        return fact,False
+    found = {}
+    for url,text in sources.items():
+        if not (urlsplit(url).hostname or '').endswith(('.edu.tw','.gov.tw')):
+            continue
+        for match in re.finditer(r'(?:得獎者|參賽者).{0,12}(?:同意|保留).{0,45}(?:圖文使用權|作品.{0,8}使用權|著作權|授權)[^。]{0,180}',text,re.S):
+            quote = match[0].split('。')[0].strip()
+            normalized = ' '.join(quote.split())
+            found.setdefault(normalized,{'value':normalized,'quote':quote,'url':url})
+    return (next(iter(found.values())),True) if len(found)==1 else (fact,False)

@@ -58,3 +58,19 @@ def test_parenthesized_roc_year_and_explicit_hour_remain_exact():
     source = '徵件期程：自公告日起至本（114）年9月12日下午5時止受理申請。'
     fact,_=resolve_deadline({}, {'https://academic.site.nthu.edu.tw/notice':source})
     assert fact['value']=='2025-09-12T17:00:00+08:00'
+
+
+def test_omitted_rights_can_recover_a_literal_winner_clause_but_not_site_copyright():
+    from app.competition_decisions import recover_explicit_rights,UNKNOWN
+    url='https://calligraphy.tku.edu.tw/rules.pdf'
+    quote='得獎者需同意該作品之圖文使用權讓與主辦單位，以利藝文推廣。'
+    fact,recovered=recover_explicit_rights(dict(UNKNOWN),{url:quote})
+    assert recovered and fact['value'].startswith('得獎者需同意') and fact['url']==url
+    assert not recover_explicit_rights(dict(UNKNOWN),{url:'網站作者保留著作權，禁止轉載。'})[1]
+
+
+def test_conflicting_licensing_clauses_do_not_get_arbitrarily_recovered():
+    from app.competition_decisions import recover_explicit_rights,UNKNOWN
+    sources={'https://campus.edu.tw/a':'參賽者同意作品使用權讓與主辦單位。',
+             'https://campus.edu.tw/b':'參賽者保留作品使用權與著作權。'}
+    assert not recover_explicit_rights(dict(UNKNOWN),sources)[1]
