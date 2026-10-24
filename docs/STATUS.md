@@ -2,6 +2,18 @@
 
 Verification date: 2026-10-24 (Asia/Taipei). The expanded competition workflow was verified in production through real discovery, owner-only Telegram delivery and persisted state. Telegram API acceptance is not proof that the owner read the message.
 
+## Three-round recovery and final production verification
+
+- The three requested fix/retrieve/ten-question rounds are recorded in [COMPETITION_ROUNDS.md](COMPETITION_ROUNDS.md). Local listing counts were 31, 31 and 33; the final count includes two explicitly curated rule sources and is not a count of qualifying contests or unique contests across rounds.
+- Final application revision `kairos-git-bb36d0d` serves 100% of traffic. `KAIROS_GIT_SHA` matches `bb36d0d719bf271c014bd3c5c41b3e5d070a9cdc`; production health confirms fifteen listing pages, two curated sources and disabled DM automation.
+- The first post-round scan on `kairos-git-bc58295` returned HTTP 200, created two curated candidate records and completed two evidence-bearing screens. All three TKU-related documents, including the actual organizer PDF, and all six Post-Meaning pages returned usable text. Telegram accepted the Post-Meaning pending card and Firestore recorded `telegram_sent`.
+- Production inspection found an invented university affiliation inside TKU's unstructured model plan before that candidate was delivered. A focused correction replaced free-form plan display with validated stage estimates and structured components. All **154 tests passed**; compilation and whitespace checks passed. The final card uses the corrected renderer rather than treating model profile prose as fact.
+- The final scan on `kairos-git-bb36d0d` returned HTTP 200 and delivered the queued TKU pending card. Its persisted record has `telegram_sent`, a Telegram message receipt and updated delivery time. Both scans returned zero search errors, card errors and deferred search terms. These are real pending candidates, not synthetic test cards or claims of eligibility.
+- Across the two post-round scans there were eighteen bounded rule-fetch attempts, fifteen source failures and three model-screen attempts. The final scan's one analysis produced no usable quoted facts; the two curated candidates retained grounded rule evidence. Each scan attempted twelve listing pages and reported two listing failures. Cloud access is therefore still less complete than local access.
+- The first scan encountered seven blocked URLs and the final scan eight different blocked URLs: the intersection was zero. Nine freshly failed/incomplete records in the final sample have persisted future retry times and `competition_pending_screen` state. Source failure rates are not represented as solved; the confirmed improvement is durable cooldown, forward progress and useful card delivery without repeated immediate requests.
+- No fully eligible sample was established. Remaining attendance, entrant display rights, fee/timezone details and production feasibility need authoritative evidence or human judgment. Unpublished terms were not invented; no organizer was contacted and no registration, payment or submission occurred.
+- Documentation-only follow-up commits do not change the deployed application code.
+
 ## Live discovery recovery
 
 - Production revision `kairos-git-2ad88f2` serves 100% of traffic; `KAIROS_GIT_SHA` matches `2ad88f2fb329bdaace89fd7a3d965b5239f86f86`. Health reports fifteen configured announcement sources and disabled DM automation.
