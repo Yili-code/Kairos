@@ -92,31 +92,29 @@ class TelegramClient:
         fee = display("registration_amount") if value("registration_fee") == "paid" and value("registration_amount") != "unknown" else display("registration_fee")
         if value("registration_fee") == "paid":
             fee += "（報名前由你決定）"
-        lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>回報與投入</b>",
+        lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>獎勵與期限</b>",
                  f"獎金：{display('prize')}", f"截止：{deadline}", f"報名費：{fee}"]
         hours, cost, share = estimate.get("total_hours"), estimate.get("extra_tools_twd"), estimate.get("ai_share")
         time_text = f"{hours:g} 小時" if hours is not None else "未知"
         cost_text = f"NT${cost:g}" if cost is not None else "未知"
         share_text = f"{share:.0%}" if share is not None else "未知"
+        lines.extend(["", "<b>投入預估</b>"])
         if all(item is None for item in (hours, cost, share)):
             lines.append("AI 估算：尚無可靠的耗時、製作比例與工具費估算")
         else:
-            lines.extend([f"AI 估算：{time_text}｜AI 製作 {share_text}｜額外工具 {cost_text}"])
-        lines.append("你的上限：6 小時／工具 NT$300；優先使用現有 ChatGPT 額度")
+            lines.extend([f"AI 估算：{time_text}（非實測）", f"AI 製作 {share_text}｜額外工具 {cost_text}"])
+        lines.append("目標：≤6 小時 · AI ≥90% · 工具 ≤NT$300")
         if estimate.get('component_rule_issues'):
             lines.append('分工含未核實的人工限制，暫不採信這份製作計畫。')
         elif estimate.get('plan'):
             stages = (('planning', '規劃'), ('generation_wait', '生成等待'), ('review', '審查'),
                       ('submission', '交件'), ('finals', '後續'))
-            lines.append('流程估算：' + '／'.join(
+            lines.append('流程估算：\n' + ' · '.join(
                 label + (f'{estimate[key]:g}h' if isinstance(estimate.get(key), (int, float)) else '未知')
                 for key, label in stages))
             if value('attendance') == 'unknown':
                 lines.append('後續出席義務尚未確認，流程估算仍不完整。')
-        components = estimate.get('production_components', [])
-        if components:
-            lines.append('估算分工：' + '；'.join(
-                escaped_clip(part['name'], 25) + f'（AI {part["ai_fraction"]:.0%}）' for part in components[:3]))
+        # Detailed component weights stay in the assessment; keep mobile cards scannable.
 
         labels = {
             "deliverables": "交付", "submission": "交件方式", "ai_policy": "AI 使用",
@@ -138,10 +136,6 @@ class TelegramClient:
             lines.append(f"\n<b>{heading}</b>\n" + "\n".join("• " + escaped_clip(item, 90) for item in report["blockers"][:4]))
             if len(report["blockers"]) > 4:
                 lines.append(f"另有 {len(report['blockers']) - 4} 項限制待核對，請查看來源。")
-        questions = report.get('verification_questions', [])
-        if questions and report.get('sources'):
-            lines.append('\n<b>核對重點</b>\n' + '\n'.join(
-                '• ' + escaped_clip(item['question'], 65) for item in questions[:2]))
         sources = sorted(report.get("sources", []), key=lambda url: (
             0 if '.pdf' in url.lower() else 1 if '/terms' in url.lower() else 2))
         if sources:
@@ -150,7 +144,7 @@ class TelegramClient:
             ))
         else:
             lines.append("\n尚無可核對的規則來源，不能判定符合條件。")
-        lines.append("<i>耗時含 AI 等待、修改、交件及答辯；估算非實測，不代表得獎機率。報名費另計。</i>")
+        lines.append("\n<i>耗時含等待、修改、交件與答辯。工具優先使用現有 ChatGPT 額度；報名費另計。估算不代表得獎機率。</i>")
         result = await self.call("sendMessage", {
             "chat_id": self.owner_chat_id, "text": "\n".join(lines), "parse_mode": "HTML",
             "disable_web_page_preview": True,

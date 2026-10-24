@@ -314,7 +314,9 @@ def test_card_is_escaped_and_has_no_outreach_or_submission_button():
     assert run_immediate(client.send_candidate(candidate)) == 9
     text = client.payload["text"]
     assert "&lt;b&gt;unsafe&lt;/b&gt;" in text
-    assert "非實測" in text and "報名費另計" in text and "90%" not in text  # displays actual estimate, 95%
+    assert "非實測" in text and "報名費另計" in text
+    assert "AI 製作 95%" in text and "AI 製作 90%" not in text
+    assert "目標：≤6 小時 · AI ≥90% · 工具 ≤NT$300" in text
     assert len(text.encode("utf-16-le")) // 2 < 4096
     buttons = json.dumps(client.payload["reply_markup"])
     assert "approve" not in buttons and "start" not in buttons
