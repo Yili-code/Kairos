@@ -15,6 +15,8 @@ from app.storage import FirestoreRepository, InMemoryRepository
 from app.telegram import TelegramClient
 from app.threads_client import ThreadsClient
 from app.workflow import Workflow
+from app.scan_runtime import ScanRunner, MemoryScanStore, FirestoreScanStore, status_text
+import asyncio
 
 
 def build_workflow(settings: Settings) -> Workflow:
@@ -72,6 +74,21 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
     )
     api.state.settings = settings
     api.state.workflow = active_workflow
+    scan_repository = getattr(active_workflow, 'repository', None)
+    scan_store = (FirestoreScanStore(scan_repository.client)
+                  if isinstance(scan_repository, FirestoreRepository) else MemoryScanStore())
+    scan_runner = ScanRunner(scan_store, active_workflow.telegram)
+    api.state.scan_runner = scan_runner
+
+    def operational_status():
+        from collections import Counter
+        state = scan_store.status()
+        if scan_repository:
+            rows = scan_repository.find_by_status(['competition_pending_screen', 'competition_screening',
+                'discovered', 'telegram_sending', 'telegram_uncertain', 'telegram_failed', 'telegram_sent'], limit=500)
+            state['queue'] = dict(Counter(row.status for row in rows))
+            state['queue_sample_limit'] = 500
+        return state
 
     @api.get("/health")
     async def health() -> dict[str, Any]:
@@ -89,13 +106,22 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
         }
 
     @api.post("/tasks/discover")
-    async def discover(x_scheduler_secret: str | None = Header(default=None)) -> dict[str, int]:
+    async def discover(x_scheduler_secret: str | None = Header(default=None)) -> dict[str, Any]:
         if not settings.scheduler_secret or x_scheduler_secret != settings.scheduler_secret:
             raise HTTPException(status_code=403, detail="Forbidden")
         if not settings.threads_access_token:
             raise HTTPException(status_code=503, detail="Threads search is not configured")
         terms = tuple(dict.fromkeys((*settings.threads_search_terms, *settings.competition_search_terms)))
-        return await active_workflow.discover(terms)
+        try:
+            return await scan_runner.run(lambda: active_workflow.discover(terms))
+        except Exception:
+            raise HTTPException(status_code=503, detail="Scan failed; inspect authenticated scan status") from None
+
+    @api.get('/tasks/status')
+    async def scan_status(x_scheduler_secret: str | None = Header(default=None)):
+        if not settings.scheduler_secret or x_scheduler_secret != settings.scheduler_secret:
+            raise HTTPException(status_code=403, detail='Forbidden')
+        return await asyncio.to_thread(operational_status)
 
     @api.post("/telegram/webhook")
     async def telegram_webhook(
@@ -121,6 +147,9 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             raise HTTPException(status_code=403, detail="Owner only")
         text = str(message.get("text") or "").strip()
         if text:
+            if text == '/status':
+                await active_workflow.telegram.notify(status_text(await asyncio.to_thread(operational_status)))
+                return {'ok': True}
             reply_to_text = str(((message.get("reply_to_message") or {}).get("text") or ""))
             handled = await active_workflow.handle_text(text, reply_to_text=reply_to_text)
             if not handled:

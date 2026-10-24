@@ -13,6 +13,12 @@ FIELDS = (
 )
 
 
+class ThreadsUnavailable(RuntimeError):
+    def __init__(self, status_code):
+        super().__init__(f'Threads keyword search failed with HTTP {status_code}')
+        self.status_code = status_code
+
+
 class ThreadsClient:
     def __init__(
         self,
@@ -44,7 +50,7 @@ class ThreadsClient:
                 response.raise_for_status()
                 payload: dict[str, Any] = response.json()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(f"Threads keyword search failed with HTTP {exc.response.status_code}") from None
+            raise ThreadsUnavailable(exc.response.status_code) from None
         except (httpx.HTTPError, ValueError, TypeError):
             raise RuntimeError("Threads keyword search transport or response failed") from None
         data = payload.get("data")

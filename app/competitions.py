@@ -306,10 +306,11 @@ class CompetitionScreener:
                             and fact.get('url') in sources and grounded_quote(fact.get('quote', ''), sources[fact['url']])):
                         raw['facts'][key] = fact
             candidate.competition = evaluate(raw, sources)
-        except (RuntimeError, ValueError, TypeError, KeyError):
+        except (RuntimeError, ValueError, TypeError, KeyError) as exc:
             candidate.competition = {
                 "decision": "pending", "blockers": ["規則擷取或分析失敗，尚未確認符合條件"],
                 "facts": {}, "sources": list(sources), "estimate": {},
+                "analysis_error": 'model_rate_limited' if 'HTTP 429' in str(exc) else 'model_failed',
             }
         candidate.category = "ai_competition"
         context_receipts = self._receipt_context.get()

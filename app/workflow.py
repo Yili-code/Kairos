@@ -15,7 +15,7 @@ from app.models import Candidate, Status
 from app.scoring import apply_score
 from app.storage import Repository
 from app.telegram import TelegramClient
-from app.threads_client import ThreadsClient
+from app.threads_client import ThreadsClient, ThreadsUnavailable
 
 
 def message_hash(message: str) -> str:
@@ -37,6 +37,7 @@ class Workflow:
         competition_screener: Any = None,
         competition_screen_limit: int = 3,
         announcement_source: Any = None,
+        competition_mailer: Any = None,
     ) -> None:
         self.repository = repository
         self.threads = threads
@@ -49,6 +50,8 @@ class Workflow:
         self.competition_screener = competition_screener
         self.competition_screen_limit = competition_screen_limit
         self.announcement_source = announcement_source
+        # A configured mailbox does not authorize automatic third-party contact.
+        self.competition_mailer = None
 
     async def discover(self, terms: tuple[str, ...]) -> dict[str, int]:
         created: dict[str, Candidate] = {}
@@ -63,6 +66,10 @@ class Workflow:
         deadline = time.monotonic() + 480
         deferred_terms = 0
         attempted_competitions: set[str] = set()
+        candidate_errors = 0
+        rule_fetch_errors = 0
+        model_rate_limited = False
+        search_halted = False
 
         def recover_empty_assessment(candidate):
             if (candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition'
@@ -72,8 +79,8 @@ class Workflow:
                 self.repository.save(candidate)
             return candidate
 
-        async def ingest(candidate):
-            nonlocal screened, competition_errors, competition_source_errors, competition_attempts
+        async def ingest_one(candidate):
+            nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
@@ -95,7 +102,7 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                     if self.repository.create_if_absent(candidate):
                         created[candidate.id] = candidate
-                if (screened >= self.competition_screen_limit
+                if (model_rate_limited or screened >= self.competition_screen_limit
                         or candidate.id in attempted_competitions
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
@@ -106,6 +113,8 @@ class Workflow:
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
                 await self.competition_screener.screen(candidate)
+                model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
+                rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
                 if candidate.competition.get("sources"):
                     screened += 1
                 decision = candidate.competition.get("decision", "pending")
@@ -126,8 +135,18 @@ class Workflow:
             elif self.repository.create_if_absent(candidate):
                 created[candidate.id] = candidate
 
+        async def ingest(candidate):
+            nonlocal candidate_errors
+            try:
+                await ingest_one(candidate)
+            except Exception:
+                candidate_errors += 1
+
         if self.announcement_source:
-            leads, announcement_errors = await self.announcement_source.discover()
+            try:
+                leads, announcement_errors = await self.announcement_source.discover()
+            except Exception:
+                leads, announcement_errors = [], 1
             announcements_discovered = len(leads)
             # Fresh explicit AI calls should not wait behind generic design-award backlog.
             for candidate in sorted(leads, key=lambda item: (
@@ -146,10 +165,16 @@ class Workflow:
                 try:
                     candidates = await self.threads.search(term, limit=self.per_term_limit)
                     break
+                except ThreadsUnavailable as exc:
+                    if exc.status_code in {401, 403, 429}:
+                        search_halted = True
+                        deferred_terms = len(terms) - term_index - 1
+                        break
                 except Exception:
                     continue
             if candidates is None:
                 errors += 1
+                if search_halted:break
                 continue
             for candidate in candidates:
                 await ingest(candidate)
@@ -222,9 +247,11 @@ class Workflow:
             candidate.status = Status.TELEGRAM_SENT
             self.repository.save(candidate)
             sent += 1
-        if terms and errors == len(terms):
-            await self.telegram.notify("Opportunity scan failed for every search term. No results were evaluated.")
         return {
+            'candidate_errors': candidate_errors,
+            'competition_rule_fetch_errors': rule_fetch_errors,
+            'model_rate_limited': int(model_rate_limited),
+            'search_halted': int(search_halted),
             "discovered": len(created),
             "shortlisted": len(shortlist),
             "cards_sent": sent,
