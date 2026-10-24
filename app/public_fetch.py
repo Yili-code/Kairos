@@ -70,17 +70,21 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
                         body.extend(chunk)
                         if len(body) > effective_limit:
                             return PublicPage(current, "too_large", attempts=attempts)
+                    page = PublicPage(current, "ok" if body else "empty", bytes(body), kind,
+                                      response.encoding or "utf-8", attempts)
                     if 'html' in kind:
                         navigation = MetaRefresh()
-                        navigation.feed(bytes(body).decode(response.encoding or 'utf-8', errors='replace'))
+                        try:
+                            navigation.feed(page.text())
+                        except (ValueError, AssertionError):
+                            return PublicPage(current, 'malformed_html', attempts=attempts)
                         if navigation.target:
                             target = urljoin(current, navigation.target)
                             if target == current or not allowed(target):
                                 return PublicPage(current, 'redirect_blocked', attempts=attempts)
                             current = target
                             break
-                    return PublicPage(current, "ok" if body else "empty", bytes(body), kind,
-                                      response.encoding or "utf-8", attempts)
+                    return page
             except (httpx.TimeoutException, httpx.NetworkError):
                 if retry == 0:
                     continue

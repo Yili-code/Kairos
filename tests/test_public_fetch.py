@@ -63,3 +63,10 @@ def test_meta_refresh_cannot_bypass_redirect_validation_or_hop_limit():
     assert fetch(handler).status == 'redirect_blocked' and len(calls) == 1
     page = fetch(lambda r:httpx.Response(200,headers={'content-type':'text/html'},text='<meta http-equiv="refresh" content="0; url='+str(r.url)+'x">'))
     assert page.status == 'redirect_limit' and page.attempts == 3
+
+
+def test_unknown_charset_and_malformed_html_do_not_crash_the_fetch_batch():
+    page = fetch(lambda _:httpx.Response(200,headers={'content-type':'text/html; charset=not-a-codec'},content=b'<p>Rules</p>'))
+    assert page.status == 'ok' and page.text() == '<p>Rules</p>'
+    page = fetch(lambda _:httpx.Response(200,headers={'content-type':'text/html'},text='<![invalid]>'))
+    assert page.status == 'malformed_html'
