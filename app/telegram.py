@@ -156,6 +156,20 @@ class TelegramClient:
         ai_quote = facts.get("ai_policy", {}).get("quote")
         if value("ai_policy") != "unknown" and ai_quote:
             lines.append(f"<i>AI 規則摘錄：{escaped_clip(ai_quote, 140)}</i>")
+        conditions = []
+        for part in estimate.get('production_components', []):
+            if part.get('human_only') and part.get('rule_quote') and part.get('rule_url') in report.get('sources', []):
+                conditions.append(('須本人完成', part['rule_quote'], part['rule_url']))
+        for condition in report.get('decision_conditions', []):
+            if condition.get('url') in report.get('sources', []) and condition.get('kind') in {'licence', 'reward'}:
+                conditions.append(('授權原文' if condition['kind'] == 'licence' else '獎勵限制',
+                                   condition.get('quote', ''), condition['url']))
+        if conditions:
+            lines.extend(['', '<b>不可漏掉的條件</b>'])
+            for label, quote, url in conditions[:3]:
+                lines.append(f'{label}：{escaped_clip(quote, 440)} <a href="{html.escape(url, quote=True)}">依據</a>')
+            if len(conditions) > 3:
+                lines.append(f'另有 {len(conditions) - 3} 項原文限制，請核對完整來源。')
         if report.get("blockers"):
             heading = "不符合的原因" if report.get("decision") == "rejected" else "決策前先確認"
             lines.append(f"\n<b>{heading}</b>\n" + "\n".join("• " + escaped_clip(item, 90) for item in report["blockers"][:4]))

@@ -19,7 +19,7 @@ import httpx
 from app.models import Candidate
 from app.public_fetch import fetch_public
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions
 from app.profile import PROFILE
 
 
@@ -536,6 +536,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     return {
         "decision": decision, "rank": rank, "blockers": rejected + blockers,
         "facts": facts, "sources": list(sources),
+        "decision_conditions": explicit_decision_conditions(sources),
         'fact_diagnostics': diagnostics,
         "checked_at": now.isoformat(),
         'verification_questions': [{'field': key, 'question': question}

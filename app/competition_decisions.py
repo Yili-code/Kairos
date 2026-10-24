@@ -16,6 +16,24 @@ MONTHS = {name.lower(): number for number in range(1,13)
 CLOSING = re.compile(r'截止|期限|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
+def explicit_decision_conditions(sources):
+    """Retain literal licence and conditional-reward clauses omitted by summaries."""
+    patterns = {
+        'licence': r'By entering[^.]{0,180}?you grant[^.]{15,900}\.',
+        'reward': r'Only premium[^.]{0,150}(?:bonus|reward)[^.]{0,80}\.(?:\s*Each account[^.]{0,120}\.)?',
+    }
+    conditions, seen = [], set()
+    for url, page in sources.items():
+        for kind, pattern in patterns.items():
+            for match in re.finditer(pattern, page, re.I):
+                quote = match[0]
+                identity = (kind, ' '.join(quote.split()).casefold())
+                if identity not in seen:
+                    seen.add(identity)
+                    conditions.append({'kind': kind, 'quote': quote, 'url': url})
+    return conditions
+
+
 def _calendar_date(text, page):
     text = re.sub(r'[（(](\d{3})[）)]年',r'\1年',text)
     match = re.search(r'(?:(\d{3,4})[年/.-])?(\d{1,2})[月/.-](\d{1,2})日?', text)
