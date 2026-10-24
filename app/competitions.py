@@ -373,7 +373,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         diagnostics[name] = 'grounded' if grounded and value != 'unknown' else 'unknown' if value == 'unknown' else 'invalid_or_unmatched_quote'
 
     fee = facts['registration_fee']
-    if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase necessary', fee['quote'], re.I):
+    if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase (?:is )?necessary', fee['quote'], re.I):
         facts['registration_fee'] = {'value': 'unknown', 'quote': '', 'url': ''}
         diagnostics['registration_fee'] = 'no_explicit_free_entry_statement'
     if facts['registration_fee']['value'] == 'unknown':
