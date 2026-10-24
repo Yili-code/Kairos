@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.announcements import AnnouncementSource, MAX_BOARDS
 from app.config import Settings
+from app.fetch_policy import PublicFetcher
 
 
 async def audit() -> dict:
@@ -20,8 +21,9 @@ async def audit() -> dict:
     urls = tuple(dict.fromkeys(settings.announcement_source_urls))
     started = time.monotonic()
     candidates, receipts = {}, []
+    fetcher = PublicFetcher()
     for offset in range(0, len(urls), MAX_BOARDS):
-        source = AnnouncementSource(urls[offset:offset + MAX_BOARDS], settings.competition_rules_hosts)
+        source = AnnouncementSource(urls[offset:offset + MAX_BOARDS], settings.competition_rules_hosts, fetcher=fetcher)
         rows, _ = await source.discover()
         receipts.extend(source.last_report)
         for candidate in rows:

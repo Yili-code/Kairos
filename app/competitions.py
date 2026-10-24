@@ -225,9 +225,10 @@ def pdf_text(body: bytes) -> str:
 
 
 class CompetitionScreener:
-    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0) -> None:
+    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0, fetcher=None) -> None:
         self.llm = llm
         self.hosts = hosts
+        self.fetcher = fetcher or fetch_public
         self.transport = transport
         self.fetch_timeout = fetch_timeout
         self.last_report: list[dict] = []
@@ -254,7 +255,7 @@ class CompetitionScreener:
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
             for url in pending:
-                fetched = await fetch_public(client, url, lambda target: allowed_url(target, self.hosts))
+                fetched = await self.fetcher(client, url, lambda target: allowed_url(target, self.hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
                            "attempts": fetched.attempts, "bytes": len(fetched.body)}
                 receipts.append(receipt)

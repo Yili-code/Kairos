@@ -129,11 +129,12 @@ def entries(body: str, base: str, hosts: tuple[str, ...]) -> list[Candidate]:
 
 
 class AnnouncementSource:
-    def __init__(self, urls: tuple[str, ...], hosts: tuple[str, ...], *, transport=None, seed_pages=()):
+    def __init__(self, urls: tuple[str, ...], hosts: tuple[str, ...], *, transport=None, seed_pages=(), fetcher=None):
         self.urls = urls
         self.hosts = hosts
         self.transport = transport
         self.seed_pages = seed_pages
+        self.fetcher = fetcher or fetch_public
         self.last_report: list[dict] = []
 
     async def discover(self) -> tuple[list[Candidate], int]:
@@ -162,9 +163,9 @@ class AnnouncementSource:
                                 if current in visited:
                                     break
                                 visited.add(current)
-                                page = await fetch_public(client, current, lambda target: allowed_url(target, self.hosts))
+                                page = await self.fetcher(client, current, lambda target: allowed_url(target, self.hosts))
                                 status = 'unsupported_content' if page.status == 'ok' and 'application/pdf' in page.content_type else page.status
-                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts}
+                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts, "from_cache": page.from_cache, "retry_at": page.retry_at}
                                 receipts.append(receipt)
                                 if status != 'ok':
                                     break

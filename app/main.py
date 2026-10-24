@@ -8,6 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from app.config import Settings, DEFAULT_COMPETITION_SEEDS
 from app.competitions import CompetitionScreener
 from app.announcements import AnnouncementSource
+from app.fetch_policy import PublicFetcher, FirestoreFetchState
 from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
 from app.llm import GeminiClient
 from app.storage import FirestoreRepository, InMemoryRepository
@@ -33,6 +34,7 @@ def build_workflow(settings: Settings) -> Workflow:
     )
     llm = GeminiClient(settings.gemini_api_key, settings.gemini_model,
                        fallback_model=settings.gemini_fallback_model)
+    fetcher = PublicFetcher(FirestoreFetchState(repository.client) if isinstance(repository, FirestoreRepository) else None)
     return Workflow(
         repository=repository,
         threads=ThreadsClient(settings.threads_api_base, settings.threads_access_token),
@@ -42,10 +44,10 @@ def build_workflow(settings: Settings) -> Workflow:
         shortlist_threshold=settings.shortlist_threshold,
         per_term_limit=settings.discovery_limit_per_term,
         max_cards=settings.telegram_max_cards_per_run,
-        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts),
+        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts, fetcher=fetcher),
         competition_screen_limit=settings.competition_screen_limit,
         announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts,
-                                               seed_pages=DEFAULT_COMPETITION_SEEDS if settings.announcement_source_urls else ()),
+                                               seed_pages=DEFAULT_COMPETITION_SEEDS if settings.announcement_source_urls else (), fetcher=fetcher),
     )
 
 

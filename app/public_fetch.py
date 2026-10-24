@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
@@ -31,6 +33,9 @@ class PublicPage:
     content_type: str = ""
     encoding: str = "utf-8"
     attempts: int = 0
+    headers: dict[str, str] = field(default_factory=dict)
+    from_cache: bool = False
+    retry_at: float | None = None
 
     def text(self) -> str:
         try:
@@ -39,7 +44,23 @@ class PublicPage:
             return self.body.decode("utf-8", errors="replace")
 
 
-async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_000_000, pdf_limit=3_000_000) -> PublicPage:
+def retry_after(value: str, now: float) -> float:
+    """Return an absolute operational cooldown, never a cached 429 response."""
+    try:
+        seconds = int(value)
+        if seconds >= 0:
+            return now + max(60, seconds)
+    except (ValueError, OverflowError):
+        pass
+    try:
+        closing = parsedate_to_datetime(value)
+        if closing.tzinfo is None:
+            closing = closing.replace(tzinfo=UTC)
+        return max(now + 60, closing.timestamp())
+    except (ValueError, TypeError, OverflowError):
+        return now + 12 * 3600
+
+async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_000_000, pdf_limit=3_000_000, before_request=None) -> PublicPage:
     """At most three hops and one retry per hop; never follow an unchecked URL."""
     attempts = 0
     current = url
@@ -49,8 +70,16 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
         for retry in range(2):
             attempts += 1
             try:
+                if before_request:
+                    blocked = await before_request(current)
+                    if blocked:
+                        blocked.attempts = attempts - 1
+                        return blocked
                 async with client.stream("GET", current, headers={"User-Agent": "Kairos/0.3 public-contest-review"}) as response:
-                    if response.status_code in {429, 500, 502, 503, 504} and retry == 0:
+                    headers = {key: response.headers[key] for key in ('retry-after', 'cache-control', 'etag', 'last-modified') if key in response.headers}
+                    if response.status_code == 429:
+                        return PublicPage(current, 'http_429', attempts=attempts, headers=headers)
+                    if response.status_code in {500, 502, 503, 504} and retry == 0:
                         await asyncio.sleep(0.25)
                         continue
                     if response.is_redirect:
@@ -71,7 +100,7 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
                         if len(body) > effective_limit:
                             return PublicPage(current, "too_large", attempts=attempts)
                     page = PublicPage(current, "ok" if body else "empty", bytes(body), kind,
-                                      response.encoding or "utf-8", attempts)
+                                      response.encoding or "utf-8", attempts, headers)
                     if 'html' in kind:
                         navigation = MetaRefresh()
                         try:
