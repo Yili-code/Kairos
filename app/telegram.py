@@ -16,18 +16,36 @@ def escaped_clip(text: str, units: int) -> str:
     return html.escape(clipped)
 
 
+class TelegramRejected(RuntimeError):
+    """Explicit rejection or failure before connection; safe to distinguish from unknown delivery."""
+    def __init__(self, code, *, retryable=False, retry_after=60):
+        super().__init__('Telegram request not accepted')
+        self.code, self.retryable, self.retry_after = code, retryable, retry_after
+
+
 class TelegramClient:
-    def __init__(self, token: str, owner_chat_id: int, timeout: float = 15.0) -> None:
+    def __init__(self, token: str, owner_chat_id: int, timeout: float = 15.0, *, transport=None) -> None:
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.owner_chat_id = owner_chat_id
         self.timeout = timeout
+        self.transport = transport
 
     async def call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 response = await client.post(f"{self.base_url}/{method}", json=payload)
+                if response.status_code in {400, 401, 403, 404, 429}:
+                    rejected = response.json()
+                    if isinstance(rejected, dict) and rejected.get('ok') is False:
+                        parameters = rejected.get('parameters', {})
+                        delay = parameters.get('retry_after', 60) if isinstance(parameters, dict) else 60
+                        delay = delay if isinstance(delay, int) and not isinstance(delay, bool) else 60
+                        raise TelegramRejected(str(response.status_code), retryable=response.status_code == 429,
+                                               retry_after=max(60, delay))
                 response.raise_for_status()
                 result = response.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+            raise TelegramRejected('connection_not_established', retryable=True) from None
         except (httpx.HTTPError, ValueError):
             raise RuntimeError(f"Telegram {method} transport failed") from None
         if not result.get("ok"):

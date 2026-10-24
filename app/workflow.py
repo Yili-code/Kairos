@@ -4,7 +4,7 @@ import hashlib
 import re
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.dm_sender import DMUnavailable, DMSenderError
@@ -13,8 +13,8 @@ from app.competition_decisions import recommendation_identity
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
-from app.storage import Repository
-from app.telegram import TelegramClient
+from app.storage import Repository, card_claimable
+from app.telegram import TelegramClient, TelegramRejected
 from app.threads_client import ThreadsClient, ThreadsUnavailable
 
 
@@ -70,6 +70,17 @@ class Workflow:
         rule_fetch_errors = 0
         model_rate_limited = False
         search_halted = False
+
+        recovered_cards = 0
+        for stuck in self.repository.find_by_status([Status.TELEGRAM_SENDING], limit=100):
+            try:
+                started = datetime.fromisoformat(stuck.updated_at)
+                stale = started.tzinfo and started < datetime.now(UTC) - timedelta(minutes=10)
+            except (ValueError, TypeError):
+                stale = False
+            if stale and self.repository.finish_card(stuck.id, stuck.card_attempt_id, Status.TELEGRAM_UNCERTAIN,
+                                                     card_last_error='interrupted_delivery'):
+                recovered_cards += 1
 
         def recover_empty_assessment(candidate):
             if (candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition'
@@ -183,7 +194,7 @@ class Workflow:
         queued = {candidate.id: candidate for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=100)}
         queued.update(created)
         ranked = sorted(
-            (candidate for candidate in queued.values() if (
+            (candidate for candidate in queued.values() if card_claimable(candidate) and (
                 candidate.first_round_score >= self.shortlist_threshold
                 if candidate.category != "ai_competition"
                 else candidate.competition.get("decision") == "eligible"
@@ -234,24 +245,15 @@ class Workflow:
         sent = 0
         card_errors = 0
         for candidate in shortlist:
-            candidate = self.repository.claim_for_card(candidate.id)
-            if not candidate:
-                continue
-            try:
-                candidate.telegram_message_id = await self.telegram.send_candidate(candidate)
-            except RuntimeError:
-                candidate.status = Status.TELEGRAM_UNCERTAIN
-                self.repository.save(candidate)
-                card_errors += 1
-                continue
-            candidate.status = Status.TELEGRAM_SENT
-            self.repository.save(candidate)
-            sent += 1
+            outcome = await self._deliver_card(candidate.id)
+            sent += outcome == 'sent'
+            card_errors += outcome == 'failed'
         return {
             'candidate_errors': candidate_errors,
             'competition_rule_fetch_errors': rule_fetch_errors,
             'model_rate_limited': int(model_rate_limited),
             'search_halted': int(search_halted),
+            'card_uncertain_recovered': recovered_cards,
             "discovered": len(created),
             "shortlisted": len(shortlist),
             "cards_sent": sent,
@@ -277,6 +279,25 @@ class Workflow:
             "announcement_deferred_pages": sum(row.get('status') in {'cooldown','source_busy','source_paced'} for row in getattr(self.announcement_source, 'last_report', [])),
             "search_terms_deferred": deferred_terms,
         }
+
+    async def _deliver_card(self, candidate_id):
+        candidate = self.repository.claim_for_card(candidate_id)
+        if not candidate:return 'not_claimed'
+        attempt = candidate.card_attempt_id
+        try:
+            message_id = await self.telegram.send_candidate(candidate)
+        except TelegramRejected as exc:
+            retry = exc.retryable and candidate.card_attempts < 3
+            self.repository.finish_card(candidate.id, attempt, Status.DISCOVERED if retry else Status.TELEGRAM_FAILED,
+                card_retry_after=(datetime.now(UTC) + timedelta(seconds=exc.retry_after)).isoformat() if retry else '',
+                card_last_error=exc.code)
+            return 'failed'
+        except Exception:
+            self.repository.finish_card(candidate.id, attempt, Status.TELEGRAM_UNCERTAIN, card_last_error='delivery_unknown')
+            return 'failed'
+        completed = self.repository.finish_card(candidate.id, attempt, Status.TELEGRAM_SENT,
+                                                telegram_message_id=message_id, card_retry_after='', card_last_error='')
+        return 'sent' if completed else 'failed'
 
     async def handle_callback(self, callback_id: str, data: str) -> None:
         parts = data.split(":", 2)
@@ -450,15 +471,12 @@ class Workflow:
                 self.repository.save(candidate)
                 await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
                 return True
-            candidate.status = Status.TELEGRAM_SENDING
+            candidate.status = Status.DISCOVERED
+            candidate.card_attempts = 0
+            candidate.card_retry_after = ''
+            candidate.card_last_error = ''
             self.repository.save(candidate)
-            try:
-                candidate.telegram_message_id = await self.telegram.send_candidate(candidate)
-            except RuntimeError:
-                candidate.status = Status.TELEGRAM_UNCERTAIN
-            else:
-                candidate.status = Status.TELEGRAM_SENT
-            self.repository.save(candidate)
+            await self._deliver_card(candidate.id)
             return True
         waiting = self.repository.find_by_status([Status.QUESTIONNAIRE, Status.DRAFT_READY], limit=20)
         candidates = [
@@ -587,7 +605,7 @@ class Workflow:
             self.repository.save(candidate)
             await self.telegram.notify("Send result is uncertain. It will not be retried automatically; inspect Threads first.")
         else:
-            from datetime import UTC, datetime
+            from datetime import UTC, datetime, timedelta
 
             candidate.status = Status.SENT
             candidate.sent_at = datetime.now(UTC).isoformat()

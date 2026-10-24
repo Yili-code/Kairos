@@ -3,8 +3,18 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+import uuid
 
 from app.models import Candidate
+
+
+def card_claimable(candidate):
+    if candidate.status != 'discovered' or candidate.card_attempts >= 3:return False
+    if not candidate.card_retry_after:return True
+    try:
+        due = datetime.fromisoformat(candidate.card_retry_after)
+        return bool(due.tzinfo and due <= datetime.now(UTC))
+    except (ValueError, TypeError):return False
 
 
 def screen_claimable(candidate: Candidate) -> bool:
@@ -35,6 +45,7 @@ class Repository(Protocol):
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None: ...
     def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
     def claim_for_screen(self, candidate_id: str) -> Candidate | None: ...
+    def finish_card(self, candidate_id: str, attempt_id: str, status: str, **fields) -> bool: ...
 
 
 class InMemoryRepository:
@@ -70,11 +81,22 @@ class InMemoryRepository:
 
     def claim_for_card(self, candidate_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
-        if not candidate or candidate.status != "discovered":
+        if not candidate or not card_claimable(candidate):
             return None
         candidate.status = "telegram_sending"
+        candidate.card_attempt_id = uuid.uuid4().hex
+        candidate.card_attempts += 1
         self.save(candidate)
         return candidate
+
+    def finish_card(self, candidate_id, attempt_id, status, **fields):
+        candidate = self.get(candidate_id)
+        if not candidate or candidate.status != 'telegram_sending' or candidate.card_attempt_id != attempt_id:return False
+        assert set(fields) <= {'telegram_message_id', 'card_retry_after', 'card_last_error'}
+        candidate.status = status
+        for key, value in fields.items():setattr(candidate, key, value)
+        self.save(candidate)
+        return True
 
     def claim_for_screen(self, candidate_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
@@ -127,13 +149,30 @@ class FirestoreRepository:
             if not snapshot.exists:
                 return None
             data = snapshot.to_dict()
-            if data.get("status") != "discovered":
+            candidate = Candidate.from_dict(data)
+            if not card_claimable(candidate):
                 return None
-            data.update(status="telegram_sending", updated_at=datetime.now(UTC).isoformat())
-            transaction.update(reference, {"status": data["status"], "updated_at": data["updated_at"]})
+            patch = {'status': 'telegram_sending', 'updated_at': datetime.now(UTC).isoformat(),
+                     'card_attempt_id': uuid.uuid4().hex, 'card_attempts': candidate.card_attempts + 1}
+            data.update(patch)
+            transaction.update(reference, patch)
             return Candidate.from_dict(data)
 
         return claim(self.client.transaction())
+
+    def finish_card(self, candidate_id, attempt_id, status, **fields):
+        from google.cloud import firestore
+        assert set(fields) <= {'telegram_message_id', 'card_retry_after', 'card_last_error'}
+        ref = self.collection.document(candidate_id)
+        @firestore.transactional
+        def finish(transaction):
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists:return False
+            row = snapshot.to_dict()
+            if row.get('status') != 'telegram_sending' or row.get('card_attempt_id', '') != attempt_id:return False
+            transaction.update(ref, {'status': status, 'updated_at': datetime.now(UTC).isoformat(), **fields})
+            return True
+        return finish(self.client.transaction())
 
     def claim_for_screen(self, candidate_id: str) -> Candidate | None:
         from google.cloud import firestore

@@ -14,6 +14,7 @@ class Status(StrEnum):
     TELEGRAM_SENDING = "telegram_sending"
     TELEGRAM_SENT = "telegram_sent"
     TELEGRAM_UNCERTAIN = "telegram_uncertain"
+    TELEGRAM_FAILED = "telegram_failed"
     QUESTIONNAIRE = "questionnaire"
     EVALUATED = "evaluated"
     DRAFT_READY = "draft_ready"
@@ -49,6 +50,10 @@ class Candidate:
     approval_hash: str = ""
     send_attempt_id: str = ""
     telegram_message_id: int | None = None
+    card_attempt_id: str = ""
+    card_attempts: int = 0
+    card_retry_after: str = ""
+    card_last_error: str = ""
     sent_at: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
