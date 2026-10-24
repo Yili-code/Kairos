@@ -127,18 +127,20 @@ def test_expired_cooldown_and_expired_cache_allow_a_fresh_request():
     asyncio.run(run())
 
 
-def test_separate_requests_to_one_origin_are_paced_even_after_lease_release():
-    import time
+def test_separate_requests_to_one_origin_are_paced_even_after_lease_release(monkeypatch):
     async def run():
-        calls=[]
+        calls, now = [], [1000.0]
+        async def sleep(seconds):
+            now[0] += seconds
+        monkeypatch.setattr('app.fetch_policy.asyncio.sleep', sleep)
         def handler(request):
-            calls.append(time.monotonic())
+            calls.append(now[0])
             return httpx.Response(200,headers={'content-type':'text/html','cache-control':'no-store'},text='Rules')
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            fetcher=PublicFetcher(spacing=.02)
+            fetcher=PublicFetcher(clock=lambda:now[0],spacing=1.0)
             await fetcher(client,URL,ALLOWED)
             await fetcher(client,URL+'/next',ALLOWED)
-        assert len(calls)==2 and calls[1]-calls[0]>=.018
+        assert calls == [1000.0,1001.0]
     asyncio.run(run())
 
 
