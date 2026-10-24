@@ -24,7 +24,7 @@ class PublicPage:
             return self.body.decode("utf-8", errors="replace")
 
 
-async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_000_000) -> PublicPage:
+async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_000_000, pdf_limit=3_000_000) -> PublicPage:
     """At most three hops and one retry per hop; never follow an unchecked URL."""
     attempts = 0
     current = url
@@ -50,9 +50,10 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
                     if not any(item in kind for item in ("html", "xml", "rss", "atom", "application/pdf")):
                         return PublicPage(current, "unsupported_content", attempts=attempts)
                     body = bytearray()
+                    effective_limit = pdf_limit if "application/pdf" in kind else limit
                     async for chunk in response.aiter_bytes(chunk_size=16384):
                         body.extend(chunk)
-                        if len(body) > limit:
+                        if len(body) > effective_limit:
                             return PublicPage(current, "too_large", attempts=attempts)
                     return PublicPage(current, "ok" if body else "empty", bytes(body), kind,
                                       response.encoding or "utf-8", attempts)

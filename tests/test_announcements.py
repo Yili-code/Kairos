@@ -136,19 +136,20 @@ def test_campus_html_pdf_attachments_are_fetched_within_document_budget():
     assert "AI generation is allowed" in sources["https://campus.edu.tw/rules.pdf"]
 
 
-def test_related_rule_pages_cover_terms_and_deadlines_with_a_four_document_cap():
+def test_related_rule_pages_cover_terms_and_deadlines_with_a_six_document_cap():
     fetched = []
     def handler(request):
         fetched.append(str(request.url))
         return httpx.Response(200, headers={'content-type': 'text/html'}, text='''<p>Official rules</p>
             <a href="/enter">Enter</a><a href="/rules">Rules</a><a href="/faq">FAQ</a>
-            <a href="/timeline">Timeline</a><a href="/terms">Terms</a>
+            <a href="/timeline">Timeline</a><a href="/terms">Terms</a><a href="/judging">Judging</a>
             <a href="https://evil.test/terms">Other terms</a>''')
     screener = CompetitionScreener(None, HOSTS, transport=httpx.MockTransport(handler))
     sources = asyncio.run(screener.sources('https://campus.edu.tw/rules'))
     assert fetched == ['https://campus.edu.tw/rules', 'https://campus.edu.tw/terms',
-                       'https://campus.edu.tw/timeline', 'https://campus.edu.tw/enter']
-    assert len(sources) == 4
+                       'https://campus.edu.tw/timeline', 'https://campus.edu.tw/enter',
+                       'https://campus.edu.tw/faq', 'https://campus.edu.tw/judging']
+    assert len(sources) == 6
 
 
 def test_new_ai_call_is_screened_before_generic_backlog_and_fetch_failure_is_counted():

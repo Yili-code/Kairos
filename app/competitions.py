@@ -14,6 +14,7 @@ import httpx
 
 from app.models import Candidate
 from app.public_fetch import fetch_public
+from app.config import DEFAULT_COMPETITION_COMPANIONS
 
 
 FACTS = {
@@ -34,6 +35,7 @@ FACTS = {
 }
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
 TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
+MAX_RULE_DOCUMENTS = 6
 
 
 class PageText(HTMLParser):
@@ -49,7 +51,7 @@ class PageText(HTMLParser):
             href = dict(attrs).get("href") or ""
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
-            elif re.search(r"/(?:rules|terms|timeline|enter|faq|guidelines)(?:[/.?#]|$)", href, re.I):
+            elif re.search(r"/(?:rules|terms|timeline|enter|faq|guidelines|judging)(?:[/.?#]|$)", href, re.I):
                 self.rule_links.append(href)
         if tag in {"script", "style", "noscript"}:
             self.hidden += 1
@@ -85,8 +87,8 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
             and query["Action"] == "mobileloadmod" and query["Type"] == "mobile_rcg_mstr"
             and query["Nbr"].isdigit()
         )
-        public_attachment = host.endswith(".ntou.edu.tw") and parsed.path == "/app/index.php" and (
-            (set(query) <= {"Action", "Lang", "Plugin", "ad"} and query.get("Action") == "mobileads"
+        public_attachment = host.endswith(".edu.tw") and parsed.path == "/app/index.php" and (
+            (host.endswith(".ntou.edu.tw") and set(query) <= {"Action", "Lang", "Plugin", "ad"} and query.get("Action") == "mobileads"
              and query.get("ad", "").isdigit() and query.get("Plugin", "mobile") == "mobile")
             or (set(query) == {"Action", "file", "fname"} and query.get("Action") == "downloadfile"
                 and all(re.fullmatch(r"[A-Za-z0-9_+/=.-]{1,500}", query[key]) for key in ("file", "fname")))
@@ -153,6 +155,10 @@ class CompetitionScreener:
         sources = {}
         self.last_report = []
         pending = rules_urls(text, self.hosts)
+        for url in list(pending):
+            for companion in DEFAULT_COMPETITION_COMPANIONS.get(url, ()):
+                if allowed_url(companion, self.hosts) and companion not in pending:
+                    pending.append(companion)
         async with httpx.AsyncClient(
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
@@ -176,11 +182,11 @@ class CompetitionScreener:
                 if page:
                     sources[fetched.url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
-                    (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq"))
+                    (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq", "judging"))
                      if re.search(r"/" + name + r"(?:[/.?#]|$)", href, re.I)), 99))
                 for href in parser.attachments + rule_links:
                     attachment = urljoin(fetched.url, href)
-                    if len(pending) < 4 and attachment not in pending and allowed_url(attachment, self.hosts):
+                    if len(pending) < MAX_RULE_DOCUMENTS and attachment not in pending and allowed_url(attachment, self.hosts):
                         pending.append(attachment)
         return sources
 
@@ -242,6 +248,21 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
             "value": "unknown", "quote": "", "url": "",
         }
 
+    # Online submission and organizer exhibition do not establish these entrant rights.
+    attendance = facts['attendance']
+    if attendance['value'] == 'none' and not (
+        re.search(r"(?:無須|無需|不需|不須).{0,12}(?:出席|到場|答辯)|no (?:mandatory )?(?:attendance|presentation)|(?:attendance|presentation).{0,30}not required", attendance['quote'], re.I)
+        and re.search(r"所有階段|全程|入圍|頒獎|all (?:rounds|stages)|any stage|including awards", attendance['quote'], re.I)
+    ):
+        facts['attendance'] = {'value': 'unknown', 'quote': '', 'url': ''}
+    publicity = facts['publicity']
+    if publicity['value'] == 'allowed' and not re.search(
+        r"(?:參賽者|作者|創作者).{0,40}(?:可|得|保留).{0,20}(?:公開|展示|發表)|"
+        r"(?:entrant|artist|creator|you).{0,70}(?:may|retain|right).{0,45}(?:display|publish|exhibit)|publish your (?:creation|work|entry)",
+        publicity['quote'], re.I,
+    ):
+        facts['publicity'] = {'value': 'unknown', 'quote': '', 'url': ''}
+
     def value(name):
         return facts[name]["value"]
 
@@ -299,23 +320,49 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     stages = {stage: _number(estimate_raw.get(stage), 1000) for stage in EFFORT_STAGES}
     total = sum(stages.values()) if all(v is not None for v in stages.values()) else None
     share = _number(estimate_raw.get("ai_share"), 1)
+    components = []
+    if "production_components" in estimate_raw:
+        raw_components = estimate_raw["production_components"]
+        if isinstance(raw_components, list) and 1 <= len(raw_components) <= 8:
+            for part in raw_components:
+                if not isinstance(part, dict):
+                    break
+                weight = _number(part.get("weight"), 1)
+                fraction = _number(part.get("ai_fraction"), 1)
+                if (weight is None or weight <= 0 or fraction is None
+                        or not isinstance(part.get("human_only"), bool)
+                        or (part["human_only"] and fraction != 0)
+                        or not all(isinstance(part.get(key), str) and part[key].strip()
+                                   for key in ("name", "ai_work", "human_work", "tools"))):
+                    break
+                components.append({**{key: part[key][:400] for key in ("name", "ai_work", "human_work", "tools")},
+                                   "weight": weight, "ai_fraction": fraction, "human_only": part["human_only"]})
+        valid_components = (isinstance(raw_components, list) and bool(components)
+                            and len(components) == len(raw_components)
+                            and abs(sum(part['weight'] for part in components) - 1) < .001)
+        share = sum(part['weight'] * part['ai_fraction'] for part in components) if valid_components else None
+        if not valid_components:
+            components = []
     tools = _number(estimate_raw.get("extra_tools_twd"), 100000)
     plan = str(estimate_raw.get("plan") or "")[:1000]
-    uncertain = estimate_raw.get("uncertain") is not False
+    uncertain = (estimate_raw.get("uncertain") is not False
+                 or value("attendance") == "unknown" or value("deliverables") == "unknown"
+                 or ("production_components" in estimate_raw and not components))
+    estimate_conflicts = blockers if uncertain else rejected
     if total is None or total <= 0:
         blockers.append("完整耗時無法估算")
     elif total > 6:
-        rejected.append("預估完整參賽流程超過六小時")
+        estimate_conflicts.append("預估完整參賽流程超過六小時" + ("，製作計畫尚待核實" if uncertain else ""))
     elif deadline and deadline.tzinfo and (deadline - now).total_seconds() < total * 3600:
-        rejected.append("距離截止時間不足以完成預估流程")
+        estimate_conflicts.append("距離截止時間不足以完成預估流程")
     if share is None:
         blockers.append("AI 可完成比例無法估算")
     elif share < 0.9:
-        rejected.append("預估 AI 可完成比例低於 90%")
+        estimate_conflicts.append("預估 AI 可完成比例低於 90%" + ("，分工尚待核實" if uncertain else ""))
     if tools is None:
         blockers.append("額外工具費無法估算")
     elif tools > 300:
-        rejected.append("預估額外工具費超過 NT$300")
+        estimate_conflicts.append("預估額外工具費超過 NT$300" + ("，工具計畫尚待核實" if uncertain else ""))
     if not plan or uncertain:
         blockers.append("時間／AI 分工／工具計畫仍有不確定性")
     decision = "rejected" if rejected else "pending" if blockers else "eligible"
@@ -329,7 +376,9 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         "facts": facts, "sources": list(sources),
         "checked_at": now.isoformat(),
         "estimate": {**stages, "total_hours": total, "ai_share": share,
-                     "extra_tools_twd": tools, "plan": plan, "uncertain": uncertain},
+                     "extra_tools_twd": tools, "plan": plan, "uncertain": uncertain,
+                     "production_components": components,
+                     "share_basis": "components" if components else "model_estimate"},
     }
 
 
@@ -346,14 +395,18 @@ or APIs in the entry. Evaluate restrictions by component: an explicitly permitte
 with a short human-written explanation can still be broad_allowed. Quote every human-only condition,
 reserve that work for the entrant, and include its time and production share in the estimate.
 Human-only core artifacts or AI restricted to minor assistance mean limited; bans mean prohibited.
+Example: rules explicitly allow AI-generated images and animation but require a 50-word personal
+explanation. This is broad_allowed with a human-only explanation, not a ban on substantial AI production.
 Never generalize permission for one component to other components. If the scope is unclear use unknown.
 attendance=none requires evidence covering finalist/presentation/award obligations too; online_final is allowed.
+Do not infer no attendance from an online form. Do not add optional livestream viewing to mandatory finals.
 eligibility=eligible requires evidence a Taiwanese adult individual/student can enter, including exclusions.
 prize must describe actual CASH prizes (amount/currency) AND how winners are publicly recognized;
 credits, coupons, participation certificates, funding pitches and prize pools alone are unknown.
 prize_kind=cash/noncash/unknown; recognition=public/private/unknown (public announcement of winners).
 registration_fee value=free/paid/unknown; registration_amount is exact amount/currency when paid.
 publicity is the entrant's right to publicly show work/results, not the organizer's promotion license.
+An organizer showing winning works is not evidence that the entrant retains public-display rights.
 deadline must be ISO8601 with timezone, never guess the timezone. Use final submission deadline.
 rights describes IP ownership/licensing; deliverables includes all rounds, videos, demos, voting and finals.
 Use unknown for contradictory facts. Include AI disclosure conditions in ai_policy quote.
@@ -372,6 +425,13 @@ ai_share measures artifact production, not the percentage of elapsed hours witho
 Human selection, key decisions and final acceptance still count toward total hours; they do not mean
 the entrant manually produced an AI-generated asset. Account for human-only artifact components explicitly.
 Do not force a 90% estimate; explain what the AI produces and what the entrant must produce.
+Provide production_components: 1-8 artifact components with name, weight (positive; sum exactly 1),
+ai_fraction (0..1), human_only (boolean), ai_work, human_work and tools (all nonempty strings).
+Weights represent the production contribution of deliverables, not a count of tasks or elapsed hours.
+Human review of an AI-generated image is not manual production of that image. A human-only explanation
+is its own component with ai_fraction=0; never let AI draft it. Use 'none' for work that is not required.
+ai_share will be recomputed as sum(weight * ai_fraction), never trusted as a standalone percentage.
+If the production division or tool availability is unknown return an empty component list and uncertain=true.
 extra_tools_twd is per-contest incremental tool expense in TWD, excluding registration fees.
 Never estimate probability of winning.
 uncertain=true if duration, quota, dependencies or finalist work cannot be bounded. Unknown numeric estimates

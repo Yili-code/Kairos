@@ -28,6 +28,13 @@ DEFAULT_ANNOUNCEMENT_URLS = (
     "https://micromovie.org.tw/competition/", "https://www.contestwatchers.com/",
 )
 
+# Curated related sources; no facts or inferred permissions are embedded here.
+DEFAULT_COMPETITION_COMPANIONS = {
+    "https://tkutimes.tku.edu.tw/dtl.aspx?no=60832": (
+        "https://cart.ntua.edu.tw/web/news/news_in.jsp?dm_no=DM1560757140522&np_no=NP1791778067267",
+    ),
+}
+
 
 def _required(name: str) -> str:
     value = os.getenv(name, "").strip()

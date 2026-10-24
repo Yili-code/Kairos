@@ -88,10 +88,16 @@ class GeminiClient:
                 "facts": {"type": "object", "required": list(FACTS),
                           "properties": {key: fact_schema for key in FACTS}},
                 "estimate": {
-                    "type": "object", "required": [*EFFORT_STAGES, "ai_share", "extra_tools_twd", "plan", "uncertain"],
+                    "type": "object", "required": [*EFFORT_STAGES, "ai_share", "extra_tools_twd", "plan", "uncertain", "production_components"],
                     "properties": {
                         **{key: {"type": ["number", "null"]} for key in (*EFFORT_STAGES, "ai_share", "extra_tools_twd")},
                         "plan": {"type": "string"}, "uncertain": {"type": "boolean"},
+                        "production_components": {"type": "array", "items": {
+                            "type": "object", "required": ["name", "weight", "ai_fraction", "human_only", "ai_work", "human_work", "tools"],
+                            "properties": {"name": {"type": "string"}, "weight": {"type": "number"},
+                                           "ai_fraction": {"type": "number"}, "human_only": {"type": "boolean"},
+                                           **{key: {"type": "string"} for key in ("ai_work", "human_work", "tools")}},
+                        }},
                     },
                 },
             },

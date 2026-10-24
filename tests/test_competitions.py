@@ -16,7 +16,9 @@ from tests.test_workflow import make_workflow, run_immediate
 
 NOW = datetime(2026, 10, 24, tzinfo=UTC)
 URL = "https://sample.devpost.com/rules"
-QUOTE = "These are the official contest terms and entry conditions."
+QUOTE = ("These are the official contest terms and entry conditions. "
+         "No attendance or presentation is required in any stage, including awards. "
+         "Entrants retain the right to publicly display their entries.")
 SOURCES = {URL: QUOTE}
 
 
@@ -68,6 +70,49 @@ def test_six_hours_and_300_twd_are_inclusive_and_finalist_time_counts():
     raw = valid_report()
     raw["estimate"].update(finals=2, extra_tools_twd=300, ai_share=.9)
     assert evaluate(raw, SOURCES, now=NOW)["decision"] == "eligible"
+
+
+def test_uncertain_estimates_do_not_masquerade_as_confirmed_exclusions():
+    raw = valid_report()
+    raw['estimate'].update(uncertain=True, ai_share=.8, generation_wait=8, extra_tools_twd=500)
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report['decision'] == 'pending'
+    assert any('六小時' in reason for reason in report['blockers'])
+    raw['facts']['attendance']['value'] = 'onsite'
+    assert evaluate(raw, SOURCES, now=NOW)['decision'] == 'rejected'
+
+
+def test_unknown_finalist_work_cannot_make_an_estimate_certain():
+    raw = valid_report()
+    raw['facts'].pop('attendance')
+    assert evaluate(raw, SOURCES, now=NOW)['estimate']['uncertain'] is True
+
+
+@pytest.mark.parametrize('field,quote', [
+    ('attendance', 'All entries are submitted through an online form.'),
+    ('publicity', 'The organizer will exhibit the winning artworks online.'),
+])
+def test_related_but_insufficient_quotes_cannot_establish_attendance_or_entrant_rights(field, quote):
+    raw = valid_report()
+    raw['facts'][field]['quote'] = quote
+    report = evaluate(raw, {URL: QUOTE + ' ' + quote}, now=NOW)
+    assert report['facts'][field]['value'] == 'unknown'
+    assert report['decision'] == 'pending'
+
+
+def test_ai_share_is_derived_from_artifacts_and_human_only_work_is_preserved():
+    raw = valid_report()
+    raw['estimate']['ai_share'] = .1
+    part = {'name': 'Image', 'ai_work': 'Generate image', 'human_work': 'Select and inspect',
+            'tools': 'Existing ChatGPT', 'human_only': False, 'weight': .95, 'ai_fraction': 1}
+    caption = {**part, 'name': 'Caption', 'human_only': True, 'weight': .05, 'ai_fraction': 0,
+               'ai_work': 'none', 'human_work': 'Write caption personally'}
+    raw['estimate']['production_components'] = [part, caption]
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report['estimate']['ai_share'] == .95 and report['decision'] == 'eligible'
+    raw['estimate']['production_components'][1]['ai_fraction'] = 1
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report['estimate']['ai_share'] is None and report['decision'] == 'pending'
 
 
 @pytest.mark.parametrize("key", list(valid_report()["facts"]))
