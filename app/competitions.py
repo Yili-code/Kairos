@@ -388,6 +388,13 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     if recovered_rights:
         diagnostics['rights'] = 'recovered_explicit_entrant_license_clause'
 
+    conditions = explicit_decision_conditions(sources)
+    amounts = set(re.findall(r'\$[\d,]+', facts['prize']['value']))
+    if any(item['kind'] == 'mixed_prize' and amounts.intersection(re.findall(r'\$[\d,]+', item['quote']))
+           for item in conditions) and not re.search(r'\$[\d,]+\s*(?:USD\s*)?cash\b', facts['prize']['quote'], re.I):
+        facts['prize'] = {'value': 'unknown', 'quote': '', 'url': ''}
+        diagnostics['prize'] = 'mixed_prize_package_cash_breakdown_unknown'
+
     # Online submission and organizer exhibition do not establish these entrant rights.
     attendance = facts['attendance']
     if attendance['value'] == 'none' and not (
@@ -536,7 +543,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     return {
         "decision": decision, "rank": rank, "blockers": rejected + blockers,
         "facts": facts, "sources": list(sources),
-        "decision_conditions": explicit_decision_conditions(sources),
+        "decision_conditions": conditions,
         'fact_diagnostics': diagnostics,
         "checked_at": now.isoformat(),
         'verification_questions': [{'field': key, 'question': question}

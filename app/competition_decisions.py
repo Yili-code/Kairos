@@ -21,6 +21,8 @@ def explicit_decision_conditions(sources):
     patterns = {
         'licence': r'By entering[^.]{0,180}?you grant[^.]{15,900}\.',
         'reward': r'Only premium[^.]{0,150}(?:bonus|reward)[^.]{0,80}\.(?:\s*Each account[^.]{0,120}\.)?',
+        'requirement': r'The AKOOL logo MUST BE prominently displayed at the top of the video\.',
+        'mixed_prize': r'Grand Prize\s+\$[\d,]+\s+Includes:\s+Cash Award\s+AKOOL Membership / Credits[^.]{0,180}?Featured Case Study',
     }
     conditions, seen = [], set()
     for url, page in sources.items():

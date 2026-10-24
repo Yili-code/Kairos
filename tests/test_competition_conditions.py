@@ -35,3 +35,22 @@ def test_validated_human_only_rule_is_shown_even_if_deliverables_summary_omits_i
     text = capture_card(report)
     assert '須本人完成：' + quote in text
     assert 'invented' not in text
+
+
+def test_mixed_prize_headline_is_not_presented_as_a_verified_cash_amount():
+    quote = ('Grand Prize $50,000 Includes: Cash Award AKOOL Membership / Credits '
+             'Official AKOOL Creator Recognition Featured Filmmaker Spotlight Featured Case Study')
+    raw = valid_report()
+    raw['facts']['prize'] = {'value': '$50,000', 'quote': quote, 'url': URL}
+    sources = {URL: SOURCES[URL] + ' ' + quote}
+    report = evaluate(raw, sources, now=NOW)
+    assert report['facts']['prize']['value'] == 'unknown'
+    assert report['decision'] == 'pending'
+    assert report['fact_diagnostics']['prize'] == 'mixed_prize_package_cash_breakdown_unknown'
+    assert '現金拆分待確認' in capture_card(report)
+
+
+def test_explicit_top_logo_requirement_survives_a_short_deliverables_summary():
+    quote = 'The AKOOL logo MUST BE prominently displayed at the top of the video.'
+    report = evaluate(valid_report(), {URL: SOURCES[URL] + ' ' + quote}, now=NOW)
+    assert '交件限制：' + quote in capture_card(report)
