@@ -41,12 +41,15 @@ class PageText(HTMLParser):
         self.hidden = 0
         self.parts: list[str] = []
         self.attachments: list[str] = []
+        self.rule_links: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         if tag == "a":
             href = dict(attrs).get("href") or ""
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
+            elif re.search(r"/(?:rules|terms|timeline|enter|faq|guidelines)(?:[/.?#]|$)", href, re.I):
+                self.rule_links.append(href)
         if tag in {"script", "style", "noscript"}:
             self.hidden += 1
 
@@ -71,7 +74,7 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
         query = dict(pairs)
         unique_query = len({key.lower() for key, _ in pairs}) == len(pairs)
         public_navigation = all(
-            key.lower() in {"lang", "id", "n", "s", "module", "serno"}
+            key.lower() in {"lang", "id", "n", "s", "no", "dm_no", "np_no", "module", "serno"}
             and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value)
             for key, value in query.items()
         )
@@ -175,9 +178,12 @@ class CompetitionScreener:
                     page = normalize(" ".join(parser.parts))
                     if page:
                         sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
-                    for href in parser.attachments:
+                    rule_links = sorted(parser.rule_links, key=lambda href: next(
+                        (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq"))
+                         if re.search(r"/" + name + r"(?:[/.?#]|$)", href, re.I)), 99))
+                    for href in parser.attachments + rule_links:
                         attachment = urljoin(url, href)
-                        if len(pending) < 2 and attachment not in pending and allowed_url(attachment, self.hosts):
+                        if len(pending) < 4 and attachment not in pending and allowed_url(attachment, self.hosts):
                             pending.append(attachment)
                 except (httpx.HTTPError, ValueError):
                     continue
@@ -340,7 +346,11 @@ Use SOURCE_DATA only for facts. If absent, unknown. Never treat a social post as
 Each fact must contain value, a verbatim quote (12-1200 characters), and the exact source url.
 Unknown facts use value='unknown', quote='', url=''. Do not invent terms or infer permission from silence.
 ai_policy=broad_allowed ONLY when rules explicitly permit substantial AI creation, not merely an AI theme
-or APIs in the entry. Limited assistance or human-authorship rules mean limited; bans mean prohibited.
+or APIs in the entry. Evaluate restrictions by component: an explicitly permitted AI image/video entry
+with a short human-written explanation can still be broad_allowed. Quote every human-only condition,
+reserve that work for the entrant, and include its time and production share in the estimate.
+Human-only core artifacts or AI restricted to minor assistance mean limited; bans mean prohibited.
+Never generalize permission for one component to other components. If the scope is unclear use unknown.
 attendance=none requires evidence covering finalist/presentation/award obligations too; online_final is allowed.
 eligibility=eligible requires evidence a Taiwanese adult individual/student can enter, including exclusions.
 prize must describe actual CASH prizes (amount/currency) AND how winners are publicly recognized;
@@ -355,8 +365,13 @@ Estimate elapsed hours per stage: planning, generation_wait, review, submission,
 online Q&A, iterations, later rounds). Count waiting for AI. Do not shrink scope below competitive entry.
 Prefer EXISTING ChatGPT subscription for production; subscription quota is not API credit. No assumption
 that Cloud Run can call ChatGPT quota. State any API/hosting/compute/tool need in plan and extra_tools_twd.
-ai_share is the estimated fraction of production done by AI (0..1), not odds of winning. extra_tools_twd is
-per-contest incremental tool expense in TWD, excluding registration fees. Never estimate probability of winning.
+ai_share is the estimated fraction of production done by AI (0..1), not odds of winning.
+ai_share measures artifact production, not the percentage of elapsed hours without human involvement.
+Human selection, key decisions and final acceptance still count toward total hours; they do not mean
+the entrant manually produced an AI-generated asset. Account for human-only artifact components explicitly.
+Do not force a 90% estimate; explain what the AI produces and what the entrant must produce.
+extra_tools_twd is per-contest incremental tool expense in TWD, excluding registration fees.
+Never estimate probability of winning.
 uncertain=true if duration, quota, dependencies or finalist work cannot be bounded. Unknown numeric estimates
 are null. Estimates are estimates, never measured performance or organizer promises.
 Write plan and descriptive facts in Traditional Chinese. Enum values must use the exact English enums.

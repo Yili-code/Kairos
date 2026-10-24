@@ -7,6 +7,7 @@ import time
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from urllib.parse import urljoin
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -14,8 +15,10 @@ from app.competitions import allowed_url, normalize
 from app.models import Candidate
 
 
-CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|contest|competition|call for entr|open call|awards?", re.I)
-ARTIFACT_TITLE = re.compile(r"\bAI\b|生成|短片|短影音|影片|影音|設計|海報|創意|徵文|寫作|文學|插畫|漫畫|動畫|音樂|攝影|essay|writing|design|video|film|generative|poster|poetry|illustrat|animation|music|creative", re.I)
+CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|contest|competition|call for entr|open call|awards?|film festival|challenge", re.I)
+ARTIFACT_TITLE = re.compile(r"\bAI\b|生成|短片|短影音|影片|影音|設計|海報|創意|徵文|寫作|文學|書法|插畫|漫畫|動畫|音樂|攝影|essay|writing|design|video|film|generative|poster|poetry|illustrat|animation|music|creative", re.I)
+# Directory copy is a lead only; send organizer/platform links to the rules screener.
+DIRECTORY_HOSTS = {"aifilmcontests.com"}
 
 
 class AnnouncementLinks(HTMLParser):
@@ -63,9 +66,13 @@ def entries(body: str, base: str, hosts: tuple[str, ...]) -> list[Candidate]:
     for href, title in links:
         if not CONTEST_TITLE.search(title) or not ARTIFACT_TITLE.search(title):
             continue
-        if re.search(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|winners? announced|award winners", title, re.I):
+        if re.search(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|圓滿落幕|評審肯定|成果報導|winners? announced|award winners", title, re.I):
             continue
         url = urljoin(base, href)
+        if url.rstrip("/") == base.rstrip("/") or href.startswith("#"):
+            continue
+        if (urlsplit(url).hostname or "").removeprefix("www.") in DIRECTORY_HOSTS:
+            continue
         if not allowed_url(url, hosts):
             continue
         candidate_id = "notice-" + hashlib.sha256(url.encode()).hexdigest()[:24]
@@ -103,7 +110,7 @@ class AnnouncementSource:
                         body = bytearray()
                         async for chunk in response.aiter_bytes(chunk_size=16384):
                             body.extend(chunk)
-                            if len(body) > 512000:
+                            if len(body) > 1_000_000:
                                 raise ValueError("Announcement page too large")
                     leads = entries(bytes(body).decode("utf-8", errors="replace"), url, self.hosts)
                     self.last_report.append({"url": url, "status": "ok", "leads": len(leads)})

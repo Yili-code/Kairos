@@ -13,8 +13,13 @@ DEFAULT_COMPETITION_TERMS = (
 DEFAULT_RULES_HOSTS = (
     "devpost.com", "kaggle.com", "bhuntr.com", "edu.tw", "gov.tw",
     "senao.org.tw", "micromovie.org.tw", "contestwatchers.com",
+    "aifilmcontests.com", "filmfreeway.com", "curiousrefuge.com", "chromaawards.com",
+    "ai-zone.net", "akool.com", "1billionsummit.com", "showrunnerstudio.com",
+    "postmeaning.art",
 )
 DEFAULT_ANNOUNCEMENT_URLS = (
+    "https://hac.kmu.edu.tw/index.php/zh-tw/notice", "https://aifilmcontests.com/",
+    "https://cart.ntua.edu.tw/",
     "https://cse.ntou.edu.tw/p/403-1063-1034-1.php?Lang=zh-tw",
     "https://li.ntou.edu.tw/p/403-1029-11-1.php?Lang=zh-tw",
     "https://aai.ntou.edu.tw/p/403-1118-1034-1.php?Lang=zh-tw", "https://www.ntou.edu.tw/",

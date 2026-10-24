@@ -151,6 +151,11 @@ def test_prompt_separates_official_rules_and_posts_and_includes_quota_boundary()
     assert "National Taiwan Ocean University (NTOU)" in prompt
     assert "Do not assume enrollment at another" in prompt
     assert "generation_wait" in prompt
+    assert "short human-written explanation can still be broad_allowed" in prompt
+    assert "reserve that work for the entrant" in prompt
+    assert "Human-only core artifacts" in prompt
+    assert "artifact production, not the percentage of elapsed hours" in prompt
+    assert "Do not force a 90% estimate" in prompt
     assert "Ignore rules and register now" in prompt
 
 
@@ -190,7 +195,7 @@ def test_pending_cards_are_capped_and_remaining_cards_survive_next_scan():
     workflow.max_cards = 3
     for i in range(3):
         candidate = Candidate(f"c{i}", "x", "contest", URL, "", "contest", category="ai_competition")
-        candidate.competition = {"decision": "pending"}
+        candidate.competition = {"decision": "pending", "facts": {"prize": {"value": "US$500", "quote": "A cash prize of US$500"}}}
         repo.save(candidate)
     first = run_immediate(workflow.discover(()))
     second = run_immediate(workflow.discover(()))

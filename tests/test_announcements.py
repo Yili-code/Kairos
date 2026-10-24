@@ -52,6 +52,34 @@ def test_public_rss_and_atom_are_supported_without_executing_embedded_content():
     assert len(entries(atom, BASE, HOSTS)) == 1
 
 
+def test_ai_film_directory_discovers_platform_links_without_using_directory_as_rules():
+    body = '''<a href="https://filmfreeway.com/new">AI Film Festival 2026</a>
+    <a href="/contest/new">AI Film Contest details</a>
+    <a href="#browse">AI Film Competitions</a>'''
+    rows = entries(body, "https://aifilmcontests.com/", ("aifilmcontests.com", "filmfreeway.com"))
+    assert [row.permalink for row in rows] == ["https://filmfreeway.com/new"]
+    assert rows[0].competition == {}
+
+
+def test_recap_and_listing_self_links_do_not_become_contests():
+    body = '''<a href="/">Creative Design Competition Directory</a>
+    <a href="/recap">文學獎 評審肯定多元題材</a>
+    <a href="/open">AI書法比賽開放報名</a>'''
+    assert [row.permalink for row in entries(body, 'https://campus.edu.tw/', HOSTS)] == ['https://campus.edu.tw/open']
+
+
+def test_large_realistic_directory_is_read_but_unbounded_page_is_rejected():
+    async def check(size):
+        body = '<a href="/entry">AI Film Festival</a>' + ' ' * size
+        source = AnnouncementSource((BASE,), HOSTS, transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, headers={'content-type': 'text/html'}, text=body)))
+        return await source.discover()
+    rows, errors = asyncio.run(check(635574))
+    assert len(rows) == 1 and errors == 0
+    rows, errors = asyncio.run(check(1_000_000))
+    assert rows == [] and errors == 1
+
+
 def test_one_failed_board_does_not_hide_other_boards_and_no_redirect_is_followed():
     def handler(request):
         if request.url.path == "/bad":
@@ -79,6 +107,8 @@ def test_more_than_twelve_boards_rotate_by_half_day(monkeypatch):
 def test_safe_cms_navigation_is_allowed_but_actions_and_duplicate_keys_are_not():
     assert allowed_url("https://campus.edu.tw/p/406-1.php?Lang=zh-tw", HOSTS)
     assert allowed_url("https://news.gov.tw/item?id=123&module=news", HOSTS)
+    assert allowed_url("https://tkutimes.tku.edu.tw/dtl.aspx?no=60832", HOSTS)
+    assert allowed_url("https://cart.ntua.edu.tw/web/news/news_in.jsp?dm_no=DM1560757140522&np_no=NP1791778067267", HOSTS)
     assert not allowed_url("https://campus.edu.tw/?token=private", HOSTS)
     assert not allowed_url("https://campus.edu.tw/?Lang=zh-tw&lang=en", HOSTS)
     assert not allowed_url("https://cse.ntou.edu.tw/app/index.php?Action=delete&Type=mobile_rcg_mstr&Nbr=1", HOSTS)
@@ -90,7 +120,7 @@ def test_text_pdf_is_read_but_malformed_and_excessive_documents_stay_unknown():
     assert pdf_text(text_pdf(pages=21)) == TRUNCATED_MARKER
 
 
-def test_campus_html_pdf_attachment_is_fetched_within_two_document_budget():
+def test_campus_html_pdf_attachments_are_fetched_within_document_budget():
     fetched = []
 
     def handler(request):
@@ -102,8 +132,64 @@ def test_campus_html_pdf_attachment_is_fetched_within_two_document_budget():
 
     screener = CompetitionScreener(None, HOSTS, transport=httpx.MockTransport(handler))
     sources = asyncio.run(screener.sources("https://campus.edu.tw/entry"))
-    assert len(fetched) == 2
+    assert len(fetched) == 3
     assert "AI generation is allowed" in sources["https://campus.edu.tw/rules.pdf"]
+
+
+def test_related_rule_pages_cover_terms_and_deadlines_with_a_four_document_cap():
+    fetched = []
+    def handler(request):
+        fetched.append(str(request.url))
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text='''<p>Official rules</p>
+            <a href="/enter">Enter</a><a href="/rules">Rules</a><a href="/faq">FAQ</a>
+            <a href="/timeline">Timeline</a><a href="/terms">Terms</a>
+            <a href="https://evil.test/terms">Other terms</a>''')
+    screener = CompetitionScreener(None, HOSTS, transport=httpx.MockTransport(handler))
+    sources = asyncio.run(screener.sources('https://campus.edu.tw/rules'))
+    assert fetched == ['https://campus.edu.tw/rules', 'https://campus.edu.tw/terms',
+                       'https://campus.edu.tw/timeline', 'https://campus.edu.tw/enter']
+    assert len(sources) == 4
+
+
+def test_new_ai_call_is_screened_before_generic_backlog_and_fetch_failure_is_counted():
+    workflow, repo, _, _ = make_workflow()
+    workflow.competition_screen_limit = 1
+    repo.save(Candidate('old', 'office', 'design competition', BASE + 'old', '', 'announcement:' + BASE,
+                        category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN))
+    class Source:
+        async def discover(self):
+            return [Candidate('new', 'office', 'AI Film Festival', BASE + 'new', '', 'announcement:' + BASE)], 0
+    calls = []
+    class Screener:
+        hosts = HOSTS
+        async def screen(self, candidate):
+            calls.append(candidate.permalink)
+            candidate.competition = {'decision': 'pending', 'facts': {'ai_policy': {'value': 'unknown', 'quote': ''}}, 'sources': []}
+    workflow.announcement_source, workflow.competition_screener = Source(), Screener()
+    result = run_immediate(workflow.discover(()))
+    assert calls == [BASE + 'new', BASE + 'old']
+    assert result['competitions_pending'] == 2
+    assert result['competition_errors'] == result['competition_source_errors'] == 2
+    assert result['competitions_screened'] == 0
+    assert result['competition_fetch_attempts'] == 2
+    assert result['cards_sent'] == 0
+
+
+def test_blocked_sources_have_a_separate_bounded_fetch_budget():
+    workflow, _, _, _ = make_workflow()
+    workflow.competition_screen_limit = 1
+    class Source:
+        async def discover(self):
+            return [Candidate(str(i), 'office', 'AI Film Festival', BASE + str(i), '', 'announcement:' + BASE)
+                    for i in range(10)], 0
+    class Screener:
+        hosts = HOSTS
+        async def screen(self, candidate):
+            candidate.competition = {'decision': 'pending', 'facts': {}, 'sources': []}
+    workflow.announcement_source, workflow.competition_screener = Source(), Screener()
+    result = run_immediate(workflow.discover(()))
+    assert result['competition_fetch_attempts'] == result['competition_source_errors'] == 3
+    assert result['competitions_screened'] == result['cards_sent'] == 0
 
 
 def test_screening_claim_blocks_overlap_and_recovers_expired_lease():

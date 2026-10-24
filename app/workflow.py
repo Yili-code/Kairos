@@ -54,13 +54,16 @@ class Workflow:
         errors = 0
         screened = 0
         competition_errors = 0
+        competition_decisions = {"eligible": 0, "pending": 0, "rejected": 0}
+        competition_source_errors = 0
+        competition_attempts = 0
         announcement_errors = 0
         announcements_discovered = 0
         deadline = time.monotonic() + 480
         deferred_terms = 0
 
         async def ingest(candidate):
-            nonlocal screened, competition_errors
+            nonlocal screened, competition_errors, competition_source_errors, competition_attempts
             existing = self.repository.get(candidate.id)
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
@@ -82,15 +85,24 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                     if self.repository.create_if_absent(candidate):
                         created[candidate.id] = candidate
-                if screened >= self.competition_screen_limit or time.monotonic() > deadline - 90:
+                if (screened >= self.competition_screen_limit
+                        or competition_attempts >= self.competition_screen_limit * 3
+                        or time.monotonic() > deadline - 90):
                     return
                 candidate = self.repository.claim_for_screen(candidate.id)
                 if not candidate:
                     return
-                screened += 1
+                competition_attempts += 1
                 await self.competition_screener.screen(candidate)
+                if candidate.competition.get("sources"):
+                    screened += 1
+                decision = candidate.competition.get("decision", "pending")
+                competition_decisions[decision] = competition_decisions.get(decision, 0) + 1
                 candidate.status = Status.DISCOVERED
-                if not candidate.competition.get("facts"):
+                facts = candidate.competition.get("facts", {})
+                if not candidate.competition.get("sources"):
+                    competition_source_errors += 1
+                if not any(fact.get("quote") for fact in facts.values()):
                     competition_errors += 1
                 if candidate.competition.get("decision") == "rejected":
                     candidate.status = Status.SKIPPED
@@ -100,14 +112,15 @@ class Workflow:
             elif self.repository.create_if_absent(candidate):
                 created[candidate.id] = candidate
 
-        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=100)
-        for candidate in sorted(backlog, key=lambda item: item.created_at, reverse=True):
-            await ingest(candidate)
         if self.announcement_source:
             leads, announcement_errors = await self.announcement_source.discover()
             announcements_discovered = len(leads)
-            for candidate in leads:
+            # Fresh explicit AI calls should not wait behind generic design-award backlog.
+            for candidate in sorted(leads, key=lambda item: bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I)), reverse=True):
                 await ingest(candidate)
+        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=100)
+        for candidate in sorted(backlog, key=lambda item: item.created_at):
+            await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index
@@ -132,7 +145,9 @@ class Workflow:
             (candidate for candidate in queued.values() if (
                 candidate.first_round_score >= self.shortlist_threshold
                 if candidate.category != "ai_competition"
-                else candidate.competition.get("decision") in {"eligible", "pending"}
+                else candidate.competition.get("decision") == "eligible"
+                or (candidate.competition.get("decision") == "pending" and any(
+                    fact.get("quote") for fact in candidate.competition.get("facts", {}).values()))
             )),
             key=lambda candidate: candidate.first_round_score,
             reverse=True,
@@ -184,7 +199,12 @@ class Workflow:
             "card_errors": card_errors,
             "search_errors": errors,
             "competitions_screened": screened,
+            "competition_fetch_attempts": competition_attempts,
             "competition_errors": competition_errors,
+            "competition_source_errors": competition_source_errors,
+            "competitions_eligible": competition_decisions["eligible"],
+            "competitions_pending": competition_decisions["pending"],
+            "competitions_rejected": competition_decisions["rejected"],
             "announcements_discovered": announcements_discovered,
             "announcement_source_errors": announcement_errors,
             "announcement_sources_checked": len(getattr(self.announcement_source, "last_report", [])),
