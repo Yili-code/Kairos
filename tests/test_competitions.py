@@ -156,6 +156,8 @@ def test_prompt_separates_official_rules_and_posts_and_includes_quota_boundary()
     assert "Human-only core artifacts" in prompt
     assert "artifact production, not the percentage of elapsed hours" in prompt
     assert "Do not force a 90% estimate" in prompt
+    assert "AI drafts research, concept options, scripts, prompts, code, layouts" in prompt
+    assert "use null estimates and uncertain=true" in prompt
     assert "Ignore rules and register now" in prompt
 
 

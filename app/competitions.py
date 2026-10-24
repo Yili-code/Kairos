@@ -363,6 +363,12 @@ rights describes IP ownership/licensing; deliverables includes all rounds, video
 Use unknown for contradictory facts. Include AI disclosure conditions in ai_policy quote.
 Estimate elapsed hours per stage: planning, generation_wait, review, submission, finals (include rehearsal,
 online Q&A, iterations, later rounds). Count waiting for AI. Do not shrink scope below competitive entry.
+Plan an AI-first workflow: AI drafts research, concept options, scripts, prompts, code, layouts and entry
+explanations wherever rules permit. The entrant selects, makes key decisions, checks and submits.
+Do not automatically assign AI-capable writing or planning to the entrant. Reserve genuinely human-only
+components for the entrant. Name the actual production tools and their limits; do not assume ChatGPT
+can export video, use external tools or supply unlimited generation credits. If feasibility is unknown,
+use null estimates and uncertain=true rather than inventing a manual workflow or guaranteed automation.
 Prefer EXISTING ChatGPT subscription for production; subscription quota is not API credit. No assumption
 that Cloud Run can call ChatGPT quota. State any API/hosting/compute/tool need in plan and extra_tools_twd.
 ai_share is the estimated fraction of production done by AI (0..1), not odds of winning.
