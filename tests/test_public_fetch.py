@@ -43,3 +43,23 @@ def test_transient_failure_retries_but_permanent_failure_does_not():
 def test_redirect_loop_has_a_hard_hop_limit():
     page = fetch(lambda request: httpx.Response(302, headers={'location': str(request.url) + 'x'}))
     assert page.status == 'redirect_limit' and page.attempts == 3
+
+
+def test_campus_meta_refresh_resolves_relative_public_listing():
+    def handler(request):
+        if request.url.path == '/start':
+            return httpx.Response(200,headers={'content-type':'text/html'},text='<meta http-equiv="refresh" content="0; url=web/index.jsp">')
+        return httpx.Response(200,headers={'content-type':'text/html'},text='Actual contest listing')
+    page = fetch(handler)
+    assert page.url == 'https://campus.edu.tw/web/index.jsp'
+    assert page.text() == 'Actual contest listing' and page.attempts == 2
+
+
+def test_meta_refresh_cannot_bypass_redirect_validation_or_hop_limit():
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200,headers={'content-type':'text/html'},text='<meta http-equiv="refresh" content="0; url=http://127.0.0.1/private">')
+    assert fetch(handler).status == 'redirect_blocked' and len(calls) == 1
+    page = fetch(lambda r:httpx.Response(200,headers={'content-type':'text/html'},text='<meta http-equiv="refresh" content="0; url='+str(r.url)+'x">'))
+    assert page.status == 'redirect_limit' and page.attempts == 3

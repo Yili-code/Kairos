@@ -2,10 +2,25 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 import httpx
+
+
+class MetaRefresh(HTMLParser):
+    """Read declarative navigation only; never evaluate scripts."""
+    target: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag != 'meta' or (values.get('http-equiv') or '').lower() != 'refresh':
+            return
+        match = re.fullmatch(r"\s*\d+(?:\.\d+)?\s*;\s*url\s*=\s*(.+?)\s*", values.get('content') or '', re.I)
+        if match and self.target is None:
+            self.target = match[1].strip("\"'")
 
 
 @dataclass
@@ -55,6 +70,15 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
                         body.extend(chunk)
                         if len(body) > effective_limit:
                             return PublicPage(current, "too_large", attempts=attempts)
+                    if 'html' in kind:
+                        navigation = MetaRefresh()
+                        navigation.feed(bytes(body).decode(response.encoding or 'utf-8', errors='replace'))
+                        if navigation.target:
+                            target = urljoin(current, navigation.target)
+                            if target == current or not allowed(target):
+                                return PublicPage(current, 'redirect_blocked', attempts=attempts)
+                            current = target
+                            break
                     return PublicPage(current, "ok" if body else "empty", bytes(body), kind,
                                       response.encoding or "utf-8", attempts)
             except (httpx.TimeoutException, httpx.NetworkError):
