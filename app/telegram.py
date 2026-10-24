@@ -76,6 +76,13 @@ class TelegramClient:
             raw = value(key)
             return escaped_clip(values.get(raw, raw), limit)
 
+        def evidence_link(key):
+            fact = facts.get(key,{})
+            url = fact.get('url','')
+            if fact.get('value') != 'unknown' and fact.get('quote') and url in report.get('sources',[]) and url.startswith('https://'):
+                return f' <a href="{html.escape(url,quote=True)}">依據</a>'
+            return ''
+
         title_lines = re.sub(r"https?://\S+", "", candidate.text).splitlines()
         title = next((line.strip() for line in title_lines if line.strip()), "競賽資訊（名稱待確認）")
         status = {
@@ -89,11 +96,18 @@ class TelegramClient:
                 deadline = closing.astimezone(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M") + "（台灣）"
         except ValueError:
             pass
+        if facts.get('deadline', {}).get('defaults'):
+            deadline = facts['deadline']['date'].replace('-', '/') + ' 24:00（預設台灣時間、當日結束）' if '24:00' in facts['deadline']['defaults'] and '台灣時間' in facts['deadline']['defaults'] else deadline + '（預設：' + html.escape(facts['deadline']['defaults']) + '）'
         fee = display("registration_amount") if value("registration_fee") == "paid" and value("registration_amount") != "unknown" else display("registration_fee")
         if value("registration_fee") == "paid":
             fee += "（報名前由你決定）"
+        if value("registration_fee") == "unknown":
+            fee += "（實際費用未確認）"
         lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>獎勵與期限</b>",
-                 f"獎金：{display('prize')}", f"截止：{deadline}", f"報名費：{fee}"]
+                 f"獎金：{display('prize')}{evidence_link('prize')}", f"截止：{deadline}{evidence_link('deadline')}", f"報名費：{fee}"]
+        fit = {'eligible': '目前通過條件初篩；獎金與公開得獎紀錄符合目標，投入仍為估算。',
+               'rejected': '有明確條件衝突，建議略過。'}.get(report.get('decision'), '目前只適合查證；關鍵條件尚缺，未確認值得開始製作。')
+        lines.extend(['', '<b>是否值得投入</b>', fit])
         hours, cost, share = estimate.get("total_hours"), estimate.get("extra_tools_twd"), estimate.get("ai_share")
         time_text = f"{hours:g} 小時" if hours is not None else "未知"
         cost_text = f"NT${cost:g}" if cost is not None else "未知"
@@ -125,7 +139,18 @@ class TelegramClient:
         unknown = [labels[key] for key in labels if value(key) == "unknown"]
         lines.extend(["", "<b>交件與規則</b>"])
         for key in known:
-            lines.append(f"{labels[key]}：{display(key)}")
+            detail = display(key)
+            if key == 'eligibility' and value(key) in {'eligible', 'ineligible'}:
+                rule = facts.get(key, {}).get('quote')
+                if rule:
+                    sentences = re.split(r'(?<=[。；.!?])\s*', rule)
+                    matching = [sentence for sentence in sentences if re.search(r'資格|不限年齡|國籍|居住地|eligible|eligibility|open to', sentence, re.I)]
+                    rule = ' '.join(matching) if matching else rule
+                    start = re.search(r'參賽資格[：:\s]*|不限年齡|(?:eligibility|eligible entrants|open to)\b', rule, re.I)
+                    if start:
+                        rule = rule[start.start():]
+                detail += '｜' + escaped_clip(rule, 240) if rule else '｜資格規則原文待補'
+            lines.append(f"{labels[key]}：{detail}" + (evidence_link(key) if key == "eligibility" else ""))
         if unknown:
             lines.append("待補：" + "、".join(unknown))
         ai_quote = facts.get("ai_policy", {}).get("quote")
