@@ -16,7 +16,7 @@ from tests.test_workflow import make_workflow, run_immediate
 
 NOW = datetime(2026, 10, 24, tzinfo=UTC)
 URL = "https://sample.devpost.com/rules"
-QUOTE = ("These are the official contest terms and entry conditions. "
+QUOTE = ("These are the official contest terms and entry conditions. Everyone may enter. "
          "No attendance or presentation is required in any stage, including awards. "
          "Entrants retain the right to publicly display their entries. Captions must be written personally.")
 QUOTE += ' Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
@@ -55,7 +55,13 @@ def test_valid_contest_is_eligible_and_all_stages_are_counted():
 def test_hard_conflicts_are_rejected(key, value):
     raw = valid_report()
     raw["facts"][key]["value"] = value
-    assert evaluate(raw, SOURCES, now=NOW)["decision"] == "rejected"
+    sources = SOURCES
+    if key == "deadline":
+        quote = QUOTE.replace("2026-12-01 23:59", "2026-10-01 08:00")
+        for fact in raw["facts"].values():
+            fact["quote"] = quote
+        sources = {URL: quote}
+    assert evaluate(raw, sources, now=NOW)["decision"] == "rejected"
 
 
 @pytest.mark.parametrize("key,value", [
@@ -235,10 +241,10 @@ def test_invalid_estimate_numbers_fail_closed(value):
     assert evaluate(raw, SOURCES, now=NOW)["decision"] == "pending"
 
 
-def test_unknown_timezone_and_uncertain_estimates_stay_pending():
+def test_source_timezone_can_recover_model_omission_but_uncertain_estimates_stay_pending():
     raw = valid_report()
     raw["facts"]["deadline"]["value"] = "2026-12-01T23:59:00"
-    assert evaluate(raw, SOURCES, now=NOW)["decision"] == "pending"
+    assert evaluate(raw, SOURCES, now=NOW)["decision"] == "eligible"
     raw = valid_report()
     raw["estimate"]["uncertain"] = True
     assert evaluate(raw, SOURCES, now=NOW)["decision"] == "pending"
@@ -247,7 +253,10 @@ def test_unknown_timezone_and_uncertain_estimates_stay_pending():
 def test_insufficient_time_before_deadline_is_rejected():
     raw = valid_report()
     raw["facts"]["deadline"]["value"] = "2026-10-24T01:00:00Z"
-    assert evaluate(raw, SOURCES, now=NOW)["decision"] == "rejected"
+    quote = QUOTE.replace("2026-12-01 23:59", "2026-10-24 09:00")
+    for fact in raw["facts"].values():
+        fact["quote"] = quote
+    assert evaluate(raw, {URL: quote}, now=NOW)["decision"] == "rejected"
 
 
 def test_paid_fee_and_online_final_are_allowed_but_rank_lower():

@@ -4,3 +4,4 @@ httpx==0.28.1
 google-cloud-firestore==2.20.2
 playwright==1.51.0
 pypdf==6.21.2
+tzdata==2026.5
