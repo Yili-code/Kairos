@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import io
 import math
 import re
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -28,6 +29,7 @@ FACTS = {
     "publicity": {"allowed", "prohibited", "unknown"},
     "rights": None,
     "deliverables": None,
+    "participation": None,
 }
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
 TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
@@ -38,8 +40,13 @@ class PageText(HTMLParser):
         super().__init__()
         self.hidden = 0
         self.parts: list[str] = []
+        self.attachments: list[str] = []
 
     def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            href = dict(attrs).get("href") or ""
+            if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
+                self.attachments.append(href)
         if tag in {"script", "style", "noscript"}:
             self.hidden += 1
 
@@ -60,11 +67,32 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
     try:
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower()
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        query = dict(pairs)
+        unique_query = len({key.lower() for key, _ in pairs}) == len(pairs)
+        public_navigation = all(
+            key.lower() in {"lang", "id", "n", "s", "module", "serno"}
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value)
+            for key, value in query.items()
+        )
+        public_module = (
+            host.endswith(".ntou.edu.tw") and parsed.path == "/app/index.php"
+            and set(query) == {"Action", "Type", "Nbr"}
+            and query["Action"] == "mobileloadmod" and query["Type"] == "mobile_rcg_mstr"
+            and query["Nbr"].isdigit()
+        )
+        public_attachment = host.endswith(".ntou.edu.tw") and parsed.path == "/app/index.php" and (
+            (set(query) <= {"Action", "Lang", "Plugin", "ad"} and query.get("Action") == "mobileads"
+             and query.get("ad", "").isdigit() and query.get("Plugin", "mobile") == "mobile")
+            or (set(query) == {"Action", "file", "fname"} and query.get("Action") == "downloadfile"
+                and all(re.fullmatch(r"[A-Za-z0-9_+/=.-]{1,500}", query[key]) for key in ("file", "fname")))
+        )
         return (
             parsed.scheme == "https" and parsed.port in {None, 443}
             and not parsed.username and not parsed.password
             and any(host == item or host.endswith("." + item) for item in hosts)
-            and not parsed.query and not parsed.fragment
+            and unique_query and len(parsed.query) < 500
+            and (public_navigation or public_module or public_attachment) and not parsed.fragment
         )
     except ValueError:
         return False
@@ -87,6 +115,29 @@ def rules_urls(text: str, hosts: tuple[str, ...]) -> list[str]:
     return urls[:2]
 
 
+def pdf_text(body: bytes) -> str:
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(body), strict=True)
+        if reader.is_encrypted:
+            return ""
+        if len(reader.pages) > 20:
+            return TRUNCATED_MARKER
+        parts = []
+        for page in reader.pages:
+            content = page.get_contents()
+            if content and len(content.get_data()) > 2_000_000:
+                return TRUNCATED_MARKER
+            parts.append(page.extract_text() or "")
+            if sum(len(part) for part in parts) > 32_000:
+                return normalize(" ".join(parts))[:32_000] + "\n" + TRUNCATED_MARKER
+        return normalize(" ".join(parts))
+    except Exception:
+        # Malformed, encrypted or image-only documents never become positive evidence.
+        return ""
+
+
 class CompetitionScreener:
     def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None) -> None:
         self.llm = llm
@@ -95,30 +146,43 @@ class CompetitionScreener:
 
     async def sources(self, text: str) -> dict[str, str]:
         sources = {}
+        pending = rules_urls(text, self.hosts)
         async with httpx.AsyncClient(
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
-            for url in rules_urls(text, self.hosts):
+            for url in pending:
                 try:
                     async with client.stream("GET", url, headers={"User-Agent": "Kairos/0.2 contest-review"}) as response:
                         response.raise_for_status()
-                        if "text/html" not in response.headers.get("content-type", "").lower():
+                        kind = response.headers.get("content-type", "").lower()
+                        pdf = "application/pdf" in kind
+                        if not pdf and "text/html" not in kind:
                             continue
                         body = bytearray()
-                        async for chunk in response.aiter_bytes():
+                        async for chunk in response.aiter_bytes(chunk_size=16384):
                             body.extend(chunk)
-                            if len(body) > 256_000:
+                            if len(body) > (1_000_000 if pdf else 256_000):
                                 break
-                        if len(body) > 256_000:
+                        if len(body) > (1_000_000 if pdf else 256_000):
                             continue
+                    if pdf:
+                        page = pdf_text(bytes(body))
+                        if page:
+                            sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
+                        continue
                     parser = PageText()
                     parser.feed(bytes(body).decode("utf-8", errors="replace"))
                     page = normalize(" ".join(parser.parts))
                     if page:
                         sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
+                    for href in parser.attachments:
+                        attachment = urljoin(url, href)
+                        if len(pending) < 2 and attachment not in pending and allowed_url(attachment, self.hosts):
+                            pending.append(attachment)
                 except (httpx.HTTPError, ValueError):
                     continue
         return sources
+
 
     async def screen(self, candidate: Candidate) -> Candidate:
         sources = await self.sources(candidate.text)
@@ -131,7 +195,15 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
             }
         candidate.category = "ai_competition"
+        campus = candidate.search_term.startswith("announcement:")
+        candidate.competition["discovery_signal"] = (
+            "公開公告／徵件網站線索，參賽人數未知" if campus
+            else "主辦頁面手動核對，參賽人數未知" if candidate.search_term == "/competition"
+            else "社群搜尋線索，參賽人數未知"
+        )
         candidate.first_round_score = candidate.competition.get("rank", 40)
+        if campus and candidate.competition["decision"] != "rejected":
+            candidate.first_round_score += 3
         candidate.reasons = ["獎金與公開得獎紀錄導向", "六小時完整參賽流程與 NT$300 工具預算"]
         candidate.risks = candidate.competition["blockers"]
         return candidate
@@ -249,6 +321,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     rank = (75 if decision == "eligible" else 45 if decision == "pending" else 0)
     rank += 8 if value("registration_fee") == "free" else 0
     rank += 7 if value("attendance") == "none" else 0
+    rank += 4 if total is not None and 0 < total <= 2 else 0
     return {
         "decision": decision, "rank": rank, "blockers": rejected + blockers,
         "facts": facts, "sources": list(sources),
@@ -286,9 +359,13 @@ uncertain=true if duration, quota, dependencies or finalist work cannot be bound
 are null. Estimates are estimates, never measured performance or organizer promises.
 Write plan and descriptive facts in Traditional Chinese. Enum values must use the exact English enums.
 FACT keys: deadline, prize, prize_kind, recognition, registration_fee, registration_amount, submission,
-ai_policy, attendance, eligibility, publicity, rights, deliverables. Allowed enums: submission online/offline/unknown; ai_policy broad_allowed/limited/
+ai_policy, attendance, eligibility, publicity, rights, deliverables, participation. Allowed enums: submission online/offline/unknown; ai_policy broad_allowed/limited/
 prohibited/unknown; attendance none/online_final/onsite/unknown; eligibility eligible/ineligible/unknown;
 publicity allowed/prohibited/unknown. All other fact values are strings.
+participation describes entrant counts, number of prize slots, or a reported extension with exact date/year
+ONLY if explicitly evidenced. Otherwise unknown. A campus source, few search results, a small organizer,
+or an extension is NOT proof of few competitors or easy awards. Never infer award probabilities or
+expected winnings. An organizer's identity/scale is a discovery lead, not a measured competition level.
 Top-level keys: facts (object of all fact objects), estimate (object of the five stage numbers,
 ai_share, extra_tools_twd, plan, uncertain).
 SOURCE_DATA:\n""" + json.dumps(sources, ensure_ascii=False) + "\nPOST_DATA:\n" + json.dumps(

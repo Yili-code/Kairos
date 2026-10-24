@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.competitions import CompetitionScreener, allowed_url
+from app.config import DEFAULT_RULES_HOSTS
 from app.llm import GeminiClient
 from app.models import Candidate
 
@@ -24,7 +25,7 @@ def cloud_json(*arguments):
 
 
 async def verify(url: str):
-    hosts = ("devpost.com", "kaggle.com", "bhuntr.com")
+    hosts = DEFAULT_RULES_HOSTS
     if not allowed_url(url, hosts):
         raise RuntimeError("Unsupported rules URL")
     service = cloud_json("run", "services", "describe", "kairos", "--project=yili-chronos-prod", "--region=asia-east1")
@@ -51,7 +52,7 @@ async def verify(url: str):
     print(json.dumps({
         "rules_pages_fetched": len(report["sources"]), "decision": report["decision"],
         "facts_with_evidence": sum(bool(f.get("quote")) for f in report["facts"].values()),
-        "model_result_validated": bool(report["facts"]), "blockers": report["blockers"],
+        "model_result_validated": bool(report["sources"]) and bool(report["facts"]), "blockers": report["blockers"],
         "estimated_total_hours": report["estimate"].get("total_hours"),
         "estimated_ai_share": report["estimate"].get("ai_share"),
     }, ensure_ascii=False))

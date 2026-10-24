@@ -297,7 +297,7 @@ def test_repeated_social_posts_for_one_official_event_are_deduplicated():
     assert len(calls) == 1
 
 
-def test_per_scan_screen_budget_is_bounded_without_persisting_unscreened_posts():
+def test_per_scan_screen_budget_is_bounded_and_unscreened_leads_survive_next_scan():
     workflow, repo, telegram, _ = make_workflow()
     workflow.competition_screen_limit = 1
 
@@ -314,9 +314,11 @@ def test_per_scan_screen_budget_is_bounded_without_persisting_unscreened_posts()
 
     workflow.threads, workflow.competition_screener = Threads(), Screener()
     first = run_immediate(workflow.discover(("contest",)))
-    assert first["competitions_screened"] == 1 and len(repo.items) == 1
+    assert first["competitions_screened"] == 1 and len(repo.items) == 3
+    assert len(repo.find_by_status([Status.COMPETITION_PENDING_SCREEN])) == 2
     second = run_immediate(workflow.discover(("contest",)))
-    assert second["competitions_screened"] == 1 and len(repo.items) == 2
+    assert second["competitions_screened"] == 1 and len(repo.items) == 3
+    assert len(repo.find_by_status([Status.COMPETITION_PENDING_SCREEN])) == 1
 
 
 def test_card_claim_prevents_two_scans_from_delivering_same_queue_record():

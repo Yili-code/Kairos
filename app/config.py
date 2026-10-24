@@ -4,6 +4,25 @@ import json
 import os
 from dataclasses import dataclass
 
+DEFAULT_COMPETITION_TERMS = (
+    "AI competition", "online contest", "AI film competition", "design competition",
+    "線上競賽", "AI 競賽", "徵件 獎金", "生成式 AI 徵件", "校內 AI 競賽",
+    "圖書館 影片 徵件", "系所 競賽 獎金", "短影音 徵件", "海報 徵件", "AI 寫作 比賽",
+    "foundation contest", "student video contest", "micro grant creative contest", "AI art contest cash prize",
+)
+DEFAULT_RULES_HOSTS = (
+    "devpost.com", "kaggle.com", "bhuntr.com", "edu.tw", "gov.tw",
+    "senao.org.tw", "micromovie.org.tw", "contestwatchers.com",
+)
+DEFAULT_ANNOUNCEMENT_URLS = (
+    "https://cse.ntou.edu.tw/p/403-1063-1034-1.php?Lang=zh-tw",
+    "https://li.ntou.edu.tw/p/403-1029-11-1.php?Lang=zh-tw",
+    "https://aai.ntou.edu.tw/p/403-1118-1034-1.php?Lang=zh-tw", "https://www.ntou.edu.tw/",
+    "https://www.nccu.edu.tw/", "https://sdgs.nycu.edu.tw/", "https://www.yda.gov.tw/",
+    "https://www.edu.tw/Default.aspx", "https://www.moc.gov.tw/", "https://www.senao.org.tw/blogs/event",
+    "https://micromovie.org.tw/competition/", "https://www.contestwatchers.com/",
+)
+
 
 def _required(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -41,12 +60,10 @@ class Settings:
     shortlist_threshold: int
     dm_automation_enabled: bool
     threads_storage_state_json: str
-    competition_search_terms: tuple[str, ...] = (
-        "AI competition", "online contest", "AI film competition", "design competition",
-        "線上競賽", "AI 競賽", "徵件 獎金", "生成式 AI 徵件",
-    )
+    competition_search_terms: tuple[str, ...] = DEFAULT_COMPETITION_TERMS
     competition_screen_limit: int = 3
-    competition_rules_hosts: tuple[str, ...] = ("devpost.com", "kaggle.com", "bhuntr.com")
+    competition_rules_hosts: tuple[str, ...] = DEFAULT_RULES_HOSTS
+    announcement_source_urls: tuple[str, ...] = DEFAULT_ANNOUNCEMENT_URLS
 
     def validate_production(self) -> None:
         required = {
@@ -111,10 +128,13 @@ class Settings:
             threads_storage_state_json=storage_state,
             competition_search_terms=tuple(item.strip() for item in os.getenv(
                 "COMPETITION_SEARCH_TERMS",
-                "AI competition,online contest,AI film competition,design competition,線上競賽,AI 競賽,徵件 獎金,生成式 AI 徵件",
+                ",".join(DEFAULT_COMPETITION_TERMS),
             ).split(",") if item.strip()),
             competition_screen_limit=max(0, min(10, int(os.getenv("COMPETITION_SCREEN_LIMIT", "3")))),
             competition_rules_hosts=tuple(item.strip().lower() for item in os.getenv(
-                "COMPETITION_RULES_HOSTS", "devpost.com,kaggle.com,bhuntr.com",
+                "COMPETITION_RULES_HOSTS", ",".join(DEFAULT_RULES_HOSTS),
             ).split(",") if item.strip()),
+            announcement_source_urls=tuple(item.strip() for item in os.getenv(
+                "ANNOUNCEMENT_SOURCE_URLS", "\n".join(DEFAULT_ANNOUNCEMENT_URLS),
+            ).splitlines() if item.strip()),
         )

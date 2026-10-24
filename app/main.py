@@ -7,6 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 
 from app.config import Settings
 from app.competitions import CompetitionScreener
+from app.announcements import AnnouncementSource
 from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
 from app.llm import GeminiClient
 from app.storage import FirestoreRepository, InMemoryRepository
@@ -43,6 +44,7 @@ def build_workflow(settings: Settings) -> Workflow:
         max_cards=settings.telegram_max_cards_per_run,
         competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts),
         competition_screen_limit=settings.competition_screen_limit,
+        announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts),
     )
 
 
@@ -79,6 +81,7 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             "dm_automation_enabled": settings.dm_automation_enabled,
             "competition_discovery_enabled": bool(settings.competition_search_terms),
             "competition_screen_limit": settings.competition_screen_limit,
+            "announcement_sources_configured": len(settings.announcement_source_urls),
         }
 
     @api.post("/tasks/discover")

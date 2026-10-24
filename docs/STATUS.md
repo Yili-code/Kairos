@@ -11,10 +11,13 @@ Verification date: 2026-10-24 (Asia/Taipei). This file records pre-rollout evide
 
 ## Competition feature validation
 
-- Python 3.12 local validation: **112 tests passed**. Coverage includes official-quote provenance, hard policy limits, unknown facts, deadline timezone and expiry, cash versus noncash prizes, separate registration fees, bounded requests and screen count, event deduplication, durable card queue, atomic card claims, unsafe links, oversized or truncated rules, Unicode card limits, and blocked contest outreach paths.
+- Python 3.12 local validation: **122 tests passed**. Coverage includes official-quote provenance, hard policy limits, unknown facts, deadline timezone and expiry, cash versus noncash prizes, separate registration fees, bounded requests and screen count, event deduplication, durable lead/card queues, atomic card/screen claims, expired analysis leases, unsafe links, oversized or truncated rules, Unicode card limits, HTML/RSS/Atom discovery, PDF text/attachment extraction, rotating source batches, time-budget deferral and blocked contest outreach paths.
 - Compilation succeeded for application, scripts and tests.
 - A read-only real-rule/model check against `https://hackthenet2026.devpost.com/rules` fetched one official page and validated nine evidenced facts. The report rejected the entry, including AI-use, eligibility, deadline, and workload conflicts. This was an integration sample, not a recommended contest.
 - The configured primary model returned a transient HTTP 503 during validation. Competition analysis now uses the existing configured fallback on transient failures, with one attempt per model. The configured models were not changed.
+- Expanded-source check: twelve configured public listing pages were attempted; eleven responded successfully and one foundation page was rate-limited. The corrected listing/title filter yielded six candidate leads in that sample, before later keyword expansion. These are discovery leads, not qualifying competitions or complete site coverage.
+- PDF parsing was validated with locally generated text PDFs and mocked attachment responses. Two historical university PDF URLs could not be fetched during live checks and remained pending; live PDF-source integration is therefore not established by those examples.
+- Discovery uses an eight-minute soft work budget; unfinished leads remain durable and unattempted search terms are counted separately. Cloud Run and Scheduler should both use 600-second request deadlines for expanded scans.
 
 ## Rollout verification
 

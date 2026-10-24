@@ -6,7 +6,7 @@ This is intentionally not an autonomous outreach bot. Discovery can run unattend
 
 ## Current scope
 
-- Discovery uses Threads; supported organizer pages can also be reviewed with `/competition <https-url>` in the owner Telegram chat.
+- Discovery uses Threads plus public campus, government, foundation and competition-directory announcements; supported organizer pages can also be reviewed with `/competition <https-url>` in the owner Telegram chat.
 - Existing priorities remain hackathon, internship, paid project; direct-entry competitions are screened independently.
 - Schedule: 08:00 and 20:00 Asia/Taipei.
 - Maximum three new Telegram opportunity cards per run.
@@ -35,9 +35,13 @@ The goal is cash prizes and publicly demonstrable awards, with AI doing at least
 - Official evidence is required for deadlines/timezones, cash prizes, public winner recognition, eligibility, entry format, finalist/award attendance, public-display rights, deliverables, and IP terms. Missing facts remain **pending**, never inferred as free or allowed.
 - All time, production-share, and tool-cost estimates are visibly labeled AI estimates. Passing the filter does not predict an award or guarantee six-hour completion. Unbounded estimates remain pending.
 
-Competition search terms are separate from existing Threads terms, so existing installations receive the new category without overwriting customized collaboration searches. Automatic screening is capped at three new contests per run; at most one pending card is delivered within the existing three-card total limit. Additional undelivered cards stay in Firestore for later runs. Known event URLs deduplicate multiple social posts for the same contest.
+The discovery goal includes overlooked, small-scope calls with low production effort and worthwhile cash prizes, not just prominent technology hackathons. Campus or local origin is a discovery lead, **not proof of low participation**. Entrant counts and prize slots are displayed only with source evidence; unknown remains unknown. The model never estimates winning odds or expected winnings. Estimates at two hours or less receive a small ranking preference, not a promise of a two-hour award.
 
-Rules are fetched only from configured HTTPS organizer-platform hosts (default: `devpost.com`, `kaggle.com`, `bhuntr.com`). Fetching is bounded, refuses redirects/query strings/credentials, and ignores scripts. Devpost event links also request `/rules`. Quoted evidence must occur in a successfully fetched page at its exact URL. Unsupported sites, anti-bot responses, script-only pages, PDFs, and truncated rules remain pending; the system does not claim comprehensive web discovery or independent legal interpretation.
+Competition search terms are separate from existing Threads terms, so existing installations receive the new category without overwriting customized collaboration searches. Eighteen bilingual terms cover campus AI/video, posters, writing, art and foundation contests. Twelve default public listing pages cover NTOU, NCCU, NYCU, youth/education/culture agencies, a foundation, a microfilm association and an international contest directory. Listings may be partial, dynamic or blocked; successful HTTP access does not establish complete institutional coverage.
+
+Automatic screening is capped at three contests per run; at most one pending card is delivered within the existing three-card total limit. Unscreened leads are retained as `competition_pending_screen` in Firestore. Atomic screening claims expire after ten minutes if a process dies, allowing later recovery. Undelivered screened cards stay in Firestore for later runs. Known event URLs deduplicate multiple social posts for the same contest.
+
+Rules are fetched only from configured HTTPS hosts. Defaults include Devpost, Kaggle, Bounty Hunter, Taiwanese educational/government domains and selected foundation/contest-directory sites. Fetching refuses redirects and credentials and permits only bounded, known public navigation queries; tracking tokens and arbitrary actions are rejected. Devpost event links also request `/rules`. An HTML notice may supply one allowlisted PDF attachment within the two-document fetch cap. PDFs are limited to 1 MB and 20 text pages; malformed, encrypted and image-only documents do not provide positive evidence. Long text remains pending if truncated. Quoted evidence must occur in a fetched page/document at its exact URL. Unsupported, blocked or incomplete sources remain pending; there is no claim of comprehensive web discovery or independent legal interpretation.
 
 Send `/competition https://event.devpost.com/rules` in Telegram to request a fresh review or recheck a known event. This command may update its assessment and send a card; it does not draft contact messages. Competition cards have only source and skip buttons. All competition callbacks and direct-send paths reject outreach, registration, payment, and submission.
 
@@ -45,9 +49,10 @@ Cloud Run continues to use the existing Gemini API configuration for screening. 
 
 | Optional variable | Default / meaning |
 |---|---|
-| `COMPETITION_SEARCH_TERMS` | Eight bilingual competition searches; empty disables scheduled competition searches |
+| `COMPETITION_SEARCH_TERMS` | Eighteen bilingual competition searches; empty disables those Threads searches |
 | `COMPETITION_SCREEN_LIMIT` | `3`, bounded to 0–10 new contest analyses per scan |
-| `COMPETITION_RULES_HOSTS` | `devpost.com,kaggle.com,bhuntr.com`; administrator-controlled HTTPS fetch allowlist |
+| `COMPETITION_RULES_HOSTS` | Administrator-controlled HTTPS fetch allowlist; defaults are defined in `app/config.py` |
+| `ANNOUNCEMENT_SOURCE_URLS` | Newline-separated public HTML/RSS/Atom listing URLs; empty disables announcements; over 12 pages rotate in half-day batches |
 
 Read-only official-page/model verification (uses the existing authenticated Google Cloud account, writes no Firestore data, sends no Telegram message):
 
@@ -106,7 +111,7 @@ Set Telegram's webhook `secret_token` to the same value as `TELEGRAM_WEBHOOK_SEC
 2. Store the Telegram token, webhook secret, scheduler secret, Threads token, Gemini key, and optional browser state in Secret Manager.
 3. Build and deploy the provided Dockerfile to Cloud Run.
 4. Grant the runtime service account Firestore access and secret access only for the named secrets.
-5. Configure Cloud Scheduler for `0 8,20 * * *` with timezone `Asia/Taipei`, calling `POST /tasks/discover` and supplying `X-Scheduler-Secret`.
+5. Configure Cloud Scheduler for `0 8,20 * * *` with timezone `Asia/Taipei`, calling `POST /tasks/discover` and supplying `X-Scheduler-Secret`. Use 600-second deadlines for both the Scheduler HTTP attempt and Cloud Run; discovery has an eight-minute soft work budget and reports deferred search terms.
 6. Register the Telegram webhook and perform one private-chat test.
 7. Leave DM automation disabled until a controlled test account confirms the current Threads selectors and verifies the actual destination.
 

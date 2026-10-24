@@ -69,7 +69,8 @@ def main() -> int:
         job_name = f"projects/{PROJECT}/locations/{REGION}/jobs/{JOB_ID}"
         body = {
             "name": job_name,
-            "description": "Kairos Threads opportunity discovery at 08:00 and 20:00 Asia/Taipei",
+            "description": "Kairos public opportunity discovery at 08:00 and 20:00 Asia/Taipei",
+            "attemptDeadline": "600s",
             "schedule": "0 8,20 * * *",
             "timeZone": "Asia/Taipei",
             "httpTarget": {
@@ -92,7 +93,7 @@ def main() -> int:
             existing.raise_for_status()
             response = httpx.patch(
                 resource_url,
-                params={"updateMask": "description,schedule,timeZone,httpTarget"},
+                params={"updateMask": "description,schedule,timeZone,httpTarget,attemptDeadline"},
                 headers=headers,
                 json=body,
                 timeout=30,

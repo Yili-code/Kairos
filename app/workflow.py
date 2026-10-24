@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -34,6 +35,7 @@ class Workflow:
         max_cards: int,
         competition_screener: Any = None,
         competition_screen_limit: int = 3,
+        announcement_source: Any = None,
     ) -> None:
         self.repository = repository
         self.threads = threads
@@ -45,13 +47,71 @@ class Workflow:
         self.max_cards = max_cards
         self.competition_screener = competition_screener
         self.competition_screen_limit = competition_screen_limit
+        self.announcement_source = announcement_source
 
     async def discover(self, terms: tuple[str, ...]) -> dict[str, int]:
-        created: list[Candidate] = []
+        created: dict[str, Candidate] = {}
         errors = 0
         screened = 0
         competition_errors = 0
-        for term in terms:
+        announcement_errors = 0
+        announcements_discovered = 0
+        deadline = time.monotonic() + 480
+        deferred_terms = 0
+
+        async def ingest(candidate):
+            nonlocal screened, competition_errors
+            existing = self.repository.get(candidate.id)
+            if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
+                return
+            candidate = existing or candidate
+            apply_score(candidate)
+            if candidate.search_term.startswith("announcement:"):
+                candidate.category = "ai_competition"
+            if candidate.category == "ai_competition":
+                urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
+                if urls:
+                    candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
+                    canonical = self.repository.get(candidate.id)
+                    if canonical and canonical.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
+                        return
+                    candidate = canonical or candidate
+                if not self.competition_screener:
+                    return
+                if not self.repository.get(candidate.id):
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
+                    if self.repository.create_if_absent(candidate):
+                        created[candidate.id] = candidate
+                if screened >= self.competition_screen_limit or time.monotonic() > deadline - 90:
+                    return
+                candidate = self.repository.claim_for_screen(candidate.id)
+                if not candidate:
+                    return
+                screened += 1
+                await self.competition_screener.screen(candidate)
+                candidate.status = Status.DISCOVERED
+                if not candidate.competition.get("facts"):
+                    competition_errors += 1
+                if candidate.competition.get("decision") == "rejected":
+                    candidate.status = Status.SKIPPED
+                self.repository.save(candidate)
+                if candidate.id in created:
+                    created[candidate.id] = candidate
+            elif self.repository.create_if_absent(candidate):
+                created[candidate.id] = candidate
+
+        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=100)
+        for candidate in sorted(backlog, key=lambda item: item.created_at, reverse=True):
+            await ingest(candidate)
+        if self.announcement_source:
+            leads, announcement_errors = await self.announcement_source.discover()
+            announcements_discovered = len(leads)
+            for candidate in leads:
+                await ingest(candidate)
+        for term_index, term in enumerate(terms):
+            if time.monotonic() > deadline - 40:
+                deferred_terms = len(terms) - term_index
+                break
             candidates = None
             for _ in range(2):
                 try:
@@ -63,30 +123,11 @@ class Workflow:
                 errors += 1
                 continue
             for candidate in candidates:
-                if self.repository.get(candidate.id):
-                    continue
-                apply_score(candidate)
-                if candidate.category == "ai_competition":
-                    urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
-                    if urls:
-                        candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
-                        if self.repository.get(candidate.id):
-                            continue
-                    if not self.competition_screener or screened >= self.competition_screen_limit:
-                        # Do not persist unprocessed candidates: a later scan may screen them.
-                        continue
-                    screened += 1
-                    await self.competition_screener.screen(candidate)
-                    if not candidate.competition.get("facts"):
-                        competition_errors += 1
-                    if candidate.competition.get("decision") == "rejected":
-                        candidate.status = Status.SKIPPED
-                if self.repository.create_if_absent(candidate):
-                    created.append(candidate)
+                await ingest(candidate)
 
         # Keep cards beyond this run's delivery cap in a durable queue.
         queued = {candidate.id: candidate for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=100)}
-        queued.update({candidate.id: candidate for candidate in created})
+        queued.update(created)
         ranked = sorted(
             (candidate for candidate in queued.values() if (
                 candidate.first_round_score >= self.shortlist_threshold
@@ -144,6 +185,10 @@ class Workflow:
             "search_errors": errors,
             "competitions_screened": screened,
             "competition_errors": competition_errors,
+            "announcements_discovered": announcements_discovered,
+            "announcement_source_errors": announcement_errors,
+            "announcement_sources_checked": len(getattr(self.announcement_source, "last_report", [])),
+            "search_terms_deferred": deferred_terms,
         }
 
     async def handle_callback(self, callback_id: str, data: str) -> None:
@@ -303,7 +348,7 @@ class Workflow:
             url = parts[1].strip() if len(parts) == 2 else ""
             hosts = getattr(self.competition_screener, "hosts", ())
             if not self.competition_screener or not allowed_url(url, hosts):
-                await self.telegram.notify("用法：/competition https://活動主辦頁面\n目前支援 Devpost、Kaggle、獎金獵人；不接受追蹤參數或轉址連結。")
+                await self.telegram.notify("用法：/competition https://活動主辦頁面\n目前支援：" + ", ".join(hosts)[:400] + "\n僅接受公開頁面；請移除追蹤參數與登入憑證。")
                 return True
             source = rules_urls(url, hosts)[0]
             candidate_id = "contest-" + hashlib.sha256(source.encode()).hexdigest()[:24]

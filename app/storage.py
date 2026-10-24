@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from app.models import Candidate
+
+
+def screen_claimable(candidate: Candidate) -> bool:
+    if candidate.status == "competition_pending_screen":
+        return True
+    if candidate.status != "competition_screening":
+        return False
+    try:
+        updated = datetime.fromisoformat(candidate.updated_at)
+        return bool(updated.tzinfo and updated < datetime.now(UTC) - timedelta(minutes=10))
+    except (TypeError, ValueError):
+        return False
 
 
 class Repository(Protocol):
@@ -14,6 +26,7 @@ class Repository(Protocol):
     def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]: ...
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None: ...
     def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
+    def claim_for_screen(self, candidate_id: str) -> Candidate | None: ...
 
 
 class InMemoryRepository:
@@ -52,6 +65,14 @@ class InMemoryRepository:
         if not candidate or candidate.status != "discovered":
             return None
         candidate.status = "telegram_sending"
+        self.save(candidate)
+        return candidate
+
+    def claim_for_screen(self, candidate_id: str) -> Candidate | None:
+        candidate = self.get(candidate_id)
+        if not candidate or not screen_claimable(candidate):
+            return None
+        candidate.status = "competition_screening"
         self.save(candidate)
         return candidate
 
@@ -103,6 +124,26 @@ class FirestoreRepository:
             data.update(status="telegram_sending", updated_at=datetime.now(UTC).isoformat())
             transaction.update(reference, {"status": data["status"], "updated_at": data["updated_at"]})
             return Candidate.from_dict(data)
+
+        return claim(self.client.transaction())
+
+    def claim_for_screen(self, candidate_id: str) -> Candidate | None:
+        from google.cloud import firestore
+
+        reference = self.collection.document(candidate_id)
+
+        @firestore.transactional
+        def claim(transaction):
+            snapshot = reference.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            candidate = Candidate.from_dict(snapshot.to_dict())
+            if not screen_claimable(candidate):
+                return None
+            candidate.status = "competition_screening"
+            candidate.updated_at = datetime.now(UTC).isoformat()
+            transaction.update(reference, {"status": candidate.status, "updated_at": candidate.updated_at})
+            return candidate
 
         return claim(self.client.transaction())
 

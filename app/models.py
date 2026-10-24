@@ -8,6 +8,8 @@ from typing import Any
 
 class Status(StrEnum):
     DISCOVERED = "discovered"
+    COMPETITION_PENDING_SCREEN = "competition_pending_screen"
+    COMPETITION_SCREENING = "competition_screening"
     SHORTLISTED = "shortlisted"
     TELEGRAM_SENDING = "telegram_sending"
     TELEGRAM_SENT = "telegram_sent"

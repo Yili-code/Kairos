@@ -66,6 +66,7 @@ class TelegramClient:
             "submission": "交件", "ai_policy": "AI 規則", "attendance": "出席／答辯",
             "eligibility": "參賽資格", "publicity": "公開展示", "rights": "著作權／授權",
             "deliverables": "交付內容",
+            "participation": "參賽人數／獎項名額依據",
         }
         values = {
             "unknown": "待確認", "free": "免費", "paid": "付費，需你另行決定",
@@ -76,6 +77,8 @@ class TelegramClient:
         }
         status = "符合篩選（含 AI 估算）" if report.get("decision") == "eligible" else "待確認候選"
         lines = [f"<b>AI 協作線上競賽 · {status}</b>", escaped_clip(candidate.text, 200), ""]
+        if report.get("discovery_signal"):
+            lines.append(escaped_clip(report["discovery_signal"], 80))
         for key, label in labels.items():
             fact = facts.get(key, {})
             value = str(fact.get("value", "unknown"))
