@@ -140,3 +140,20 @@ def test_separate_requests_to_one_origin_are_paced_even_after_lease_release():
             await fetcher(client,URL+'/next',ALLOWED)
         assert len(calls)==2 and calls[1]-calls[0]>=.018
     asyncio.run(run())
+
+
+def test_fresh_rule_review_bypasses_success_cache_but_not_cooldown():
+    async def run():
+        state,calls=MemoryFetchState(),[]
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200,headers={'content-type':'text/html'},text='Version '+str(len(calls)))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            fetcher=PublicFetcher(state,clock=lambda:1000,spacing=0)
+            await fetcher(client,URL,ALLOWED)
+            assert (await fetcher(client,URL,ALLOWED)).text()=='Version 1'
+            assert (await fetcher.fresh(client,URL,ALLOWED)).text()=='Version 2'
+            state.rows[key('origin','campus.edu.tw')]={'retry_at':2000}
+            assert (await fetcher.fresh(client,URL,ALLOWED)).status=='cooldown'
+        assert len(calls)==2
+    asyncio.run(run())

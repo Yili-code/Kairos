@@ -88,13 +88,17 @@ class PublicFetcher:
         self.clock = clock
         self.spacing = spacing
 
-    async def __call__(self, client, url, allowed):
+    async def fresh(self, client, url, allowed):
+        """Rule reviews bypass positive caches, never origin cooldowns."""
+        return await self(client, url, allowed, use_cache=False)
+
+    async def __call__(self, client, url, allowed, *, use_cache=True):
         if not allowed(url):
             return PublicPage(url, 'unsupported')
         owner, held, last = uuid.uuid4().hex, {}, {}
         cooldown = 0
         try:
-            stored = await self.state.get(key('page', url))
+            stored = await self.state.get(key('page', url)) if use_cache else {}
             if stored.get('expires_at', 0) > self.clock() and allowed(stored['page']['url']):
                 return PublicPage(**{**stored['page'], 'from_cache': True, 'attempts': 0})
 
@@ -118,7 +122,7 @@ class PublicFetcher:
             if page.status == 'http_429':
                 cooldown = retry_after(page.headers.get('retry-after', ''), self.clock())
                 page.retry_at = cooldown
-            if page.status == 'ok' and len(page.body) <= 500_000:
+            if use_cache and page.status == 'ok' and len(page.body) <= 500_000:
                 control = page.headers.get('cache-control', '').lower()
                 if not any(token in control for token in ('no-store', 'no-cache', 'private')):
                     age = re.search(r'(?:^|,)\s*max-age=(\d+)', control)

@@ -44,7 +44,7 @@ def build_workflow(settings: Settings) -> Workflow:
         shortlist_threshold=settings.shortlist_threshold,
         per_term_limit=settings.discovery_limit_per_term,
         max_cards=settings.telegram_max_cards_per_run,
-        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts, fetcher=fetcher),
+        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts, fetcher=fetcher.fresh),
         competition_screen_limit=settings.competition_screen_limit,
         announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts,
                                                seed_pages=DEFAULT_COMPETITION_SEEDS if settings.announcement_source_urls else (), fetcher=fetcher),
