@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import hashlib
+import logging
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -19,12 +21,14 @@ from app.public_fetch import fetch_public
 
 CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|挑戰賽|contest|competition|call for entr|open call|prizes?|awards?|film festival|challenge", re.I)
 SPORT_TITLE = re.compile(r"籃球|排球|羽球|桌球|棒球|足球|游泳|田徑|馬拉松|basketball|volleyball|marathon", re.I)
-NON_ENTRY_TITLE = re.compile(r"學術期刊|學報|論叢|合唱比賽|call for papers|journal submissions", re.I)
+NON_ENTRY_TITLE = re.compile(r"(?:期刊|學刊|季刊|學報|論叢|論衡|評論|專刊|叢刊|學誌|研究[》」]).*徵稿|學術期刊|合唱比賽|call for papers|journal submissions", re.I)
+RECAP_TITLE = re.compile(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|圓滿落幕|評審肯定|成果報導|winners? announced|award winners|award-winning|獲.{0,35}(?:挑戰賽|競賽|比賽).{0,8}獎|\d+位.{0,12}高手集結", re.I)
 MAX_BOARDS = 24
 MAX_LISTING_PAGES = 2
 DISCOVERY_TIMEOUT = 60.0
 # Directory copy is a lead only; send organizer/platform links to the rules screener.
 DIRECTORY_HOSTS = {"aifilmcontests.com"}
+LOGGER = logging.getLogger(__name__)
 
 
 class AnnouncementLinks(HTMLParser):
@@ -37,9 +41,13 @@ class AnnouncementLinks(HTMLParser):
         self.image_title = ""
         self.next_links: list[str] = []
         self.is_next = False
+        self.hidden = 0
+        self.visible: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
+        if tag in {'script','style','noscript'}:
+            self.hidden += 1
         if tag == "link" and "next" in (attributes.get("rel") or "").split():
             self.next_links.append(attributes.get("href") or "")
         if tag == "a":
@@ -52,10 +60,14 @@ class AnnouncementLinks(HTMLParser):
             self.image_title = attributes["alt"]
 
     def handle_data(self, data):
-        if self.href:
+        if not self.hidden:
+            self.visible.append(data)
+        if self.href and not self.hidden:
             self.words.append(data)
 
     def handle_endtag(self, tag):
+        if tag in {'script','style','noscript'} and self.hidden:
+            self.hidden -= 1
         if tag == "a" and self.href:
             label = normalize(" ".join(self.words)) or self.title or self.image_title
             self.links.append((self.href, label))
@@ -79,7 +91,7 @@ def next_listing(body: str, base: str, hosts: tuple[str, ...]) -> str | None:
     return None
 
 
-def entries(body: str, base: str, hosts: tuple[str, ...]) -> list[Candidate]:
+def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None) -> list[Candidate]:
     parser = AnnouncementLinks()
     parser.feed(body)
     links = parser.links
@@ -94,38 +106,76 @@ def entries(body: str, base: str, hosts: tuple[str, ...]) -> list[Candidate]:
                 if link is not None:
                     links.append((link.get("href", ""), item.findtext("{http://www.w3.org/2005/Atom}title", "")))
         except ET.ParseError:
-            pass
+            raise ValueError('Malformed announcement feed') from None
+    counts = Counter()
+    contest_titles = 0
     found = {}
     for href, title in links:
         # A generic call may accept proposals, data or software without naming an artifact.
         # Discovery is deliberately broad; official rules still determine eligibility.
-        if not CONTEST_TITLE.search(title) or SPORT_TITLE.search(title) or NON_ENTRY_TITLE.search(title):
+        if not CONTEST_TITLE.search(title):
             continue
-        if re.search(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|圓滿落幕|評審肯定|成果報導|winners? announced|award winners|award-winning", title, re.I):
+        contest_titles += 1
+        if title.lower().startswith('image source:'):
+            counts['image_credit'] += 1
+            continue
+        if SPORT_TITLE.search(title) or (NON_ENTRY_TITLE.search(title) and not re.search(r'競賽|獎金|文學獎', title)):
+            counts['not_entry_call'] += 1
+            continue
+        if RECAP_TITLE.search(title):
+            counts['recap'] += 1
             continue
         try:
             url = urljoin(base, href)
         except ValueError:
+            counts['malformed_url'] += 1
             continue
         if not allowed_url(url, hosts):
+            counts['unsupported_url'] += 1
             continue
         path = urlsplit(url).path.rstrip('/').lower()
+        if (urlsplit(url).hostname or '').removeprefix('www.') == 'curiousrefuge.com' and path == '/ai-filmmaking-competitions':
+            # This is a multi-event archive, not the individual event claimed by a directory.
+            counts['directory_target'] += 1
+            continue
         if (urlsplit(url).hostname or '').removeprefix('www.') in {'contestwatchers.com', 'graphiccompetitions.com'} and (
             path in {'', '/about', '/archive', '/latest-contests', '/suggest-contest', '/submit-contest', '/how-to-organize-successful-international-contests'}
             or path.startswith(('/category/', '/tag/', '/page/'))
         ):
+            counts['directory_navigation'] += 1
             continue
         if re.fullmatch(r"(?:交流)?競賽(?:[&／/]獎勵)?|比賽|徵件|contests?|competitions?|awards?", title, re.I):
+            counts['generic_navigation'] += 1
             continue
         if url.rstrip("/") == base.rstrip("/") or href.startswith("#"):
+            counts['self_navigation'] += 1
             continue
         if (urlsplit(url).hostname or "").removeprefix("www.") in DIRECTORY_HOSTS:
+            counts['directory_navigation'] += 1
             continue
         candidate_id = "notice-" + hashlib.sha256(url.encode()).hexdigest()[:24]
+        if url in found:
+            counts['duplicate_link'] += 1
         if url not in found or len(title) > len(found[url].text.splitlines()[0]):
             found[url] = Candidate(candidate_id, "public_announcement", title[:600] + "\n" + url,
                                   url, "", "announcement:" + base, category="ai_competition")
-    return list(found.values())[:20]
+    rows = list(found.values())[:20]
+    if diagnostics is not None:
+        if rows:
+            status = 'leads_found'
+        elif contest_titles:
+            status = 'filtered_out'
+        elif re.search(r'目前無公告|暫無公告|尚無公告|no announcements|no results found', ' '.join(parser.visible), re.I):
+            status = 'no_announcements'
+        elif '<script' in body.lower() and re.search(r'''<(?:div|main)[^>]*id=["'](?:app|root|main|__next)["'][^>]*>\s*</''',body,re.I):
+            status = 'unreadable_or_dynamic'
+        elif not links:
+            status = 'unreadable_or_dynamic' if '<script' in body.lower() else 'no_public_links'
+        else:
+            status = 'no_matching_titles'
+        diagnostics.update(parse_status=status, link_count=len(links), contest_titles=contest_titles,
+                           excluded=dict(counts), truncated_leads=max(0, len(found)-len(rows)))
+    return rows
 
 
 class AnnouncementSource:
@@ -169,7 +219,13 @@ class AnnouncementSource:
                                 receipts.append(receipt)
                                 if status != 'ok':
                                     break
-                                leads = entries(page.text(), page.url, self.hosts)
+                                details = {}
+                                try:
+                                    leads = entries(page.text(), page.url, self.hosts, diagnostics=details)
+                                except (ValueError, AssertionError):
+                                    receipt['status'] = 'parse_error'
+                                    break
+                                receipt.update(details)
                                 receipt.update(resolved_url=page.url, leads=len(leads))
                                 for candidate in leads:
                                     rows.setdefault(candidate.permalink, candidate)
@@ -185,6 +241,10 @@ class AnnouncementSource:
             for rows, receipts in await asyncio.gather(*(board(url) for url in selected)):
                 self.last_report.extend(receipts)
                 errors += sum(row['status'] != 'ok' for row in receipts)
+                for receipt in receipts:
+                    if receipt['status'] != 'ok' or receipt.get('parse_status') == 'unreadable_or_dynamic':
+                        LOGGER.warning('public_discovery_issue host=%s status=%s parse_status=%s',
+                                       urlsplit(receipt['url']).hostname, receipt['status'], receipt.get('parse_status','not_parsed'))
                 for candidate in rows:
                     candidates.setdefault(candidate.permalink, candidate)
         return list(candidates.values()), errors

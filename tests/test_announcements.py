@@ -358,3 +358,57 @@ def test_malformed_link_does_not_hide_valid_entries_or_next_pages():
     assert [r.permalink for r in entries(body,BASE,HOSTS)] == ['https://campus.edu.tw/valid']
     from app.announcements import next_listing
     assert next_listing(body,BASE,HOSTS) == BASE+'?page=2'
+
+
+def test_zero_result_diagnostics_do_not_claim_an_empty_board_without_evidence():
+    cases = [
+        ('<div id="app"></div><script>var empty="no results found";</script>', 'unreadable_or_dynamic'),
+        ('<a href="/about">About</a><div id="main"></div><script src="app.js"></script>', 'unreadable_or_dynamic'),
+        ('<a href="/about">About us</a>', 'no_matching_titles'),
+        ('<p>目前無公告</p>', 'no_announcements'),
+        ('<p>Welcome</p>', 'no_public_links'),
+        ('<a href="/recap">Student competition winners announced</a>', 'filtered_out'),
+    ]
+    for body, expected in cases:
+        details = {}
+        assert entries(body,BASE,HOSTS,diagnostics=details) == []
+        assert details['parse_status'] == expected
+
+
+def test_recaps_and_periodicals_do_not_hide_open_calls_with_award_language():
+    body = '<a href="/recap">海大學生獲蘋果WWDC26學生挑戰賽獎</a><a href="/news">245位AI高手集結為市政提創新解方競賽</a><a href="/journal">生活研究學刊徵稿</a><a href="/open">AI競賽報名開放，爭取獲獎機會</a>'
+    details = {}
+    rows = entries(body,BASE,HOSTS,diagnostics=details)
+    assert [r.permalink for r in rows] == ['https://campus.edu.tw/open']
+    assert details['excluded']['recap'] == 2
+    assert details['excluded']['not_entry_call'] == 1
+
+
+def test_long_image_credit_never_wins_over_the_event_name():
+    body = '<a href="/prize"><img alt="Image source: International Competition Association 3 weeks left"></a><a href="/prize">Design Award 2026</a>'
+    rows = entries(body,BASE,HOSTS)
+    assert len(rows) == 1 and rows[0].text.startswith('Design Award 2026')
+
+
+def test_malformed_feed_is_a_parse_failure_not_a_successful_empty_board():
+    def handler(request):
+        if request.url.path.endswith('bad'):
+            return httpx.Response(200,headers={'content-type':'application/rss+xml'},text='<rss><channel><item>broken')
+        return httpx.Response(200,headers={'content-type':'text/html'},text='<a href="/entry">AI competition</a>')
+    source = AnnouncementSource((BASE+'bad',BASE),HOSTS,transport=httpx.MockTransport(handler))
+    rows, errors = asyncio.run(source.discover())
+    assert len(rows) == 1 and errors == 1
+    assert [r['status'] for r in source.last_report] == ['parse_error','ok']
+
+
+def test_directory_cannot_turn_a_primary_archive_into_a_new_current_event():
+    body = '<a href="https://curiousrefuge.com/ai-filmmaking-competitions">2026 AI Holiday Film Competition</a>'
+    details = {}
+    assert entries(body,'https://aifilmcontests.com/',('aifilmcontests.com','curiousrefuge.com'),diagnostics=details) == []
+    assert details['excluded']['directory_target'] == 1
+
+
+def test_special_issues_are_filtered_but_explicit_cash_paper_contests_are_retained():
+    body = '<a href="/issue">淨零減碳與企業永續專刊徵稿</a><a href="/journal">教育學誌徵稿</a><a href="/contest">學術期刊論文競賽徵稿，獎金一萬元</a>'
+    rows = entries(body,BASE,HOSTS)
+    assert [r.permalink for r in rows] == ['https://campus.edu.tw/contest']

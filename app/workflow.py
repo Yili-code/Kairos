@@ -223,6 +223,13 @@ class Workflow:
             "announcements_discovered": announcements_discovered,
             "announcement_source_errors": announcement_errors,
             "announcement_sources_checked": len(getattr(self.announcement_source, "last_report", [])),
+            "announcement_parse_failures": sum(row.get('status') == 'parse_error' for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_unreadable_pages": sum(row.get('parse_status') == 'unreadable_or_dynamic' for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_confirmed_empty_pages": sum(row.get('parse_status') == 'no_announcements' for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_no_match_pages": sum(row.get('parse_status') == 'no_matching_titles' for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_filtered_pages": sum(row.get('parse_status') == 'filtered_out' for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_cache_hits": sum(bool(row.get('from_cache')) for row in getattr(self.announcement_source, 'last_report', [])),
+            "announcement_deferred_pages": sum(row.get('status') in {'cooldown','source_busy','source_paced'} for row in getattr(self.announcement_source, 'last_report', [])),
             "search_terms_deferred": deferred_terms,
         }
 
