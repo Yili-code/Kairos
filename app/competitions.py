@@ -156,8 +156,9 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
         query = dict(pairs)
         unique_query = len({key.lower() for key, _ in pairs}) == len(pairs)
         public_navigation = all(
-            key.lower() in {"lang", "id", "n", "s", "no", "dm_no", "np_no", "module", "serno"}
+            key.lower() in {"lang", "id", "n", "s", "no", "dm_no", "np_no", "module", "serno", "page", "paged", "offset", "start"}
             and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value)
+            and (key.lower() not in {"page", "paged", "offset", "start"} or bool(re.fullmatch(r"[0-9]{1,6}", value)))
             for key, value in query.items()
         )
         public_module = (

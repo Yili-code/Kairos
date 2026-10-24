@@ -92,13 +92,13 @@ def test_one_failed_board_does_not_hide_other_boards_and_no_redirect_is_followed
     assert [item["status"] for item in source.last_report] == ["redirect_blocked", "ok"]
 
 
-def test_more_than_twelve_boards_rotate_by_half_day(monkeypatch):
+def test_more_than_twenty_four_boards_rotate_by_half_day(monkeypatch):
     transport = httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "text/html"}, text="empty"))
-    urls = tuple(f"https://campus.edu.tw/board{i}" for i in range(13))
+    urls = tuple(f"https://campus.edu.tw/board{i}" for i in range(25))
     source = AnnouncementSource(urls, HOSTS, transport=transport)
     monkeypatch.setattr("app.announcements.time.time", lambda: 0)
     asyncio.run(source.discover())
-    assert len(source.last_report) == 12
+    assert len(source.last_report) == 24
     monkeypatch.setattr("app.announcements.time.time", lambda: 43200)
     asyncio.run(source.discover())
     assert [item["url"] for item in source.last_report] == [urls[-1]]
@@ -287,3 +287,74 @@ def test_time_budget_preserves_new_leads_and_reports_unattempted_search_terms(mo
     assert result["search_terms_deferred"] == 2
     assert result["competitions_screened"] == 0
     assert len(repo.find_by_status([Status.COMPETITION_PENDING_SCREEN])) == 1
+
+
+def test_generic_proposal_and_data_calls_are_not_lost_to_artifact_keywords():
+    body = '<a href="/proposal">永續行動挑戰賽</a><a href="/data">Open data challenge</a><a href="/prize">Student Innovation Prize 2026</a>'
+    assert len(entries(body, BASE, HOSTS)) == 3
+
+
+def test_image_only_contest_links_keep_accessible_titles():
+    body = '<a href="/contest"><img alt="Student innovation competition" src="banner.jpg"></a>'
+    assert entries(body, BASE, HOSTS)[0].text.startswith('Student innovation competition')
+
+
+def test_next_page_is_read_once_and_cross_host_or_action_links_are_blocked():
+    fetched = []
+    def handler(request):
+        fetched.append(str(request.url))
+        if request.url.query:
+            return httpx.Response(200, headers={'content-type':'text/html'}, text='<a href="/later">永續提案徵件</a><a rel="next" href="?page=3">Next</a>')
+        return httpx.Response(200, headers={'content-type':'text/html'}, text='<a rel="next" href="https://evil.test/?page=2">Next</a><a rel="next" href="?page=2">Next</a>')
+    source = AnnouncementSource((BASE,), HOSTS, transport=httpx.MockTransport(handler))
+    rows, errors = asyncio.run(source.discover())
+    assert len(rows) == 1 and errors == 0
+    assert fetched == [BASE, BASE + '?page=2']
+    assert not allowed_url(BASE + '?page=delete', HOSTS)
+    assert not allowed_url(BASE + '?page=2&action=delete', HOSTS)
+    assert not allowed_url(BASE + '?page=2&Page=3', HOSTS)
+
+
+def test_board_concurrency_is_bounded_and_receipts_keep_configuration_order():
+    active, peak = 0, 0
+    async def handler(request):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(.001)
+        active -= 1
+        return httpx.Response(200,headers={'content-type':'text/html'},text='empty')
+    urls = tuple(BASE + str(i) for i in range(10))
+    source = AnnouncementSource(urls,HOSTS,transport=httpx.MockTransport(handler))
+    asyncio.run(source.discover())
+    assert peak == 4
+    assert [r['url'] for r in source.last_report] == list(urls)
+
+
+def test_discovery_deadline_keeps_completed_pages_and_reports_slow_boards(monkeypatch):
+    monkeypatch.setattr('app.announcements.DISCOVERY_TIMEOUT', .02)
+    async def handler(request):
+        if request.url.path.endswith('slow'):
+            await asyncio.sleep(1)
+        return httpx.Response(200,headers={'content-type':'text/html'},text='<a href="/contest">AI competition</a>')
+    source = AnnouncementSource((BASE,BASE+'slow'),HOSTS,transport=httpx.MockTransport(handler))
+    rows, errors = asyncio.run(source.discover())
+    assert len(rows) == 1 and errors == 1
+    assert source.last_report[-1]['status'] == 'discovery_timeout'
+
+
+def test_directory_navigation_and_journal_calls_do_not_consume_screening_budget():
+    body = '<a href="/submit-contest/">Submit Contest</a><a href="/category/open/">Open contests</a><a href="/archive/">Past competitions</a><a href="/prize/">2026 innovation award</a><a href="/journal/">學術期刊徵稿</a>'
+    assert [r.permalink for r in entries(body,'https://www.contestwatchers.com/',('contestwatchers.com',))] == ['https://www.contestwatchers.com/prize/']
+
+
+def test_image_credit_does_not_replace_the_actual_contest_title():
+    body = '<a href="/prize"><img alt="Image source: competitions">Actual Design Award 2026</a>'
+    assert entries(body,BASE,HOSTS)[0].text.startswith('Actual Design Award 2026')
+
+
+def test_malformed_link_does_not_hide_valid_entries_or_next_pages():
+    body = '<a href="https://[bad">AI competition</a><a href="/valid">Student Prize 2026</a><a rel="next" href="https://[bad">Next</a><a rel="next" href="?page=2">Next</a>'
+    assert [r.permalink for r in entries(body,BASE,HOSTS)] == ['https://campus.edu.tw/valid']
+    from app.announcements import next_listing
+    assert next_listing(body,BASE,HOSTS) == BASE+'?page=2'
