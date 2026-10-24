@@ -59,6 +59,8 @@ class Workflow:
         errors = 0
         screened = 0
         competition_errors = 0
+        competition_model_errors = 0
+        competition_info_insufficient = 0
         competition_decisions = {"eligible": 0, "pending": 0, "rejected": 0}
         competition_source_errors = 0
         competition_attempts = 0
@@ -98,7 +100,7 @@ class Workflow:
             return candidate
 
         async def ingest_one(candidate):
-            nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited
+            nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited, competition_model_errors, competition_info_insufficient
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
@@ -146,6 +148,8 @@ class Workflow:
                     competition_source_errors += 1
                 if not any(fact.get("quote") for fact in facts.values()):
                     competition_errors += 1
+                    competition_model_errors += bool(candidate.competition.get('analysis_error'))
+                    competition_info_insufficient += bool(candidate.competition.get('sources') and not candidate.competition.get('analysis_error'))
                     if candidate.competition.get('decision') == 'pending':
                         candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.competition.get("decision") == "rejected":
@@ -274,6 +278,8 @@ class Workflow:
             "duplicate_competition_cards_suppressed": duplicate_cards_suppressed,
             "competition_fetch_attempts": competition_attempts,
             "competition_errors": competition_errors,
+            "competition_model_errors": competition_model_errors,
+            "competition_info_insufficient": competition_info_insufficient,
             "competition_source_errors": competition_source_errors,
             "competitions_eligible": competition_decisions["eligible"],
             "competitions_pending": competition_decisions["pending"],
