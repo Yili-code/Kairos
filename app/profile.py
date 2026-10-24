@@ -12,7 +12,7 @@ PROFILE = {
         "status": "third-year computer science student",
         "expected_graduation": "2028-06",
     },
-    "english": {"test": "TOEIC", "score": 805},
+    "english": {"test": "TOEIC", "score": 900},
     "priorities": ["resume value", "competition outcome", "income"],
     "opportunity_priority": ["hackathon", "internship", "paid project"],
     "term_hours_per_week": {"min": 13, "max": 16},
