@@ -16,6 +16,7 @@ DEFAULT_RULES_HOSTS = (
     "aifilmcontests.com", "filmfreeway.com", "curiousrefuge.com", "chromaawards.com",
     "ai-zone.net", "akool.com", "1billionsummit.com", "showrunnerstudio.com",
     "postmeaning.art",
+    "graphiccompetitions.com",
 )
 DEFAULT_ANNOUNCEMENT_URLS = (
     "https://hac.kmu.edu.tw/index.php/zh-tw/notice", "https://aifilmcontests.com/",
@@ -25,7 +26,11 @@ DEFAULT_ANNOUNCEMENT_URLS = (
     "https://aai.ntou.edu.tw/p/403-1118-1034-1.php?Lang=zh-tw", "https://www.ntou.edu.tw/",
     "https://www.nccu.edu.tw/", "https://sdgs.nycu.edu.tw/", "https://www.yda.gov.tw/",
     "https://www.edu.tw/Default.aspx", "https://www.moc.gov.tw/", "https://www.senao.org.tw/blogs/event",
-    "https://micromovie.org.tw/competition/", "https://www.contestwatchers.com/",
+    "https://micromovie.org.tw/competition/", "https://www.contestwatchers.com/category/open/",
+    "https://careercenter.ncu.edu.tw/news/", "https://ec.mgt.ncu.edu.tw/zh-TW",
+    "https://academic.site.nthu.edu.tw/p/403-1007-1504-1.php?Lang=zh-tw",
+    "https://www.youth.ntpc.gov.tw/youth/ch/app/news/list?module=headnews&id=104",
+    "https://youth.kcg.gov.tw/", "https://graphiccompetitions.com/",
 )
 
 # Curated related sources; no facts or inferred permissions are embedded here.
