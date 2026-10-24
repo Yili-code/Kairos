@@ -89,7 +89,7 @@ def test_one_failed_board_does_not_hide_other_boards_and_no_redirect_is_followed
     source = AnnouncementSource(("https://campus.edu.tw/bad", BASE), HOSTS, transport=httpx.MockTransport(handler))
     rows, errors = asyncio.run(source.discover())
     assert errors == 1 and len(rows) == 1
-    assert [item["status"] for item in source.last_report] == ["HTTPStatusError", "ok"]
+    assert [item["status"] for item in source.last_report] == ["redirect_blocked", "ok"]
 
 
 def test_more_than_twelve_boards_rotate_by_half_day(monkeypatch):

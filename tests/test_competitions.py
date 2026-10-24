@@ -274,7 +274,7 @@ def test_official_fetch_strips_scripts_and_never_follows_redirects():
 
 @pytest.mark.parametrize("status,content_type,body", [
     (403, "text/html", b"Forbidden"), (200, "application/pdf", b"PDF rules"),
-    (200, "text/html", b"x" * 256001),
+    (200, "text/html", b"x" * 1000001),
 ], ids=["forbidden", "pdf", "oversized"])
 def test_failed_or_unbounded_rules_fetch_does_not_produce_evidence(status, content_type, body):
     transport = httpx.MockTransport(lambda _: httpx.Response(status, headers={"Content-Type": content_type}, content=body))

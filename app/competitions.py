@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 import httpx
 
 from app.models import Candidate
+from app.public_fetch import fetch_public
 
 
 FACTS = {
@@ -146,47 +147,41 @@ class CompetitionScreener:
         self.llm = llm
         self.hosts = hosts
         self.transport = transport
+        self.last_report: list[dict] = []
 
     async def sources(self, text: str) -> dict[str, str]:
         sources = {}
+        self.last_report = []
         pending = rules_urls(text, self.hosts)
         async with httpx.AsyncClient(
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
             for url in pending:
-                try:
-                    async with client.stream("GET", url, headers={"User-Agent": "Kairos/0.2 contest-review"}) as response:
-                        response.raise_for_status()
-                        kind = response.headers.get("content-type", "").lower()
-                        pdf = "application/pdf" in kind
-                        if not pdf and "text/html" not in kind:
-                            continue
-                        body = bytearray()
-                        async for chunk in response.aiter_bytes(chunk_size=16384):
-                            body.extend(chunk)
-                            if len(body) > (1_000_000 if pdf else 256_000):
-                                break
-                        if len(body) > (1_000_000 if pdf else 256_000):
-                            continue
-                    if pdf:
-                        page = pdf_text(bytes(body))
-                        if page:
-                            sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
-                        continue
-                    parser = PageText()
-                    parser.feed(bytes(body).decode("utf-8", errors="replace"))
-                    page = normalize(" ".join(parser.parts))
-                    if page:
-                        sources[url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
-                    rule_links = sorted(parser.rule_links, key=lambda href: next(
-                        (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq"))
-                         if re.search(r"/" + name + r"(?:[/.?#]|$)", href, re.I)), 99))
-                    for href in parser.attachments + rule_links:
-                        attachment = urljoin(url, href)
-                        if len(pending) < 4 and attachment not in pending and allowed_url(attachment, self.hosts):
-                            pending.append(attachment)
-                except (httpx.HTTPError, ValueError):
+                fetched = await fetch_public(client, url, lambda target: allowed_url(target, self.hosts))
+                receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
+                           "attempts": fetched.attempts, "bytes": len(fetched.body)}
+                self.last_report.append(receipt)
+                if fetched.status != "ok":
                     continue
+                if "application/pdf" in fetched.content_type:
+                    page = pdf_text(fetched.body)
+                    receipt["status"] = "ok" if page else "pdf_no_text"
+                    if page:
+                        sources[fetched.url] = page
+                    continue
+                parser = PageText()
+                parser.feed(fetched.text())
+                page = normalize(" ".join(parser.parts))
+                receipt["status"] = "ok" if page else "empty_text"
+                if page:
+                    sources[fetched.url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
+                rule_links = sorted(parser.rule_links, key=lambda href: next(
+                    (i for i, name in enumerate(("terms", "rules", "timeline", "enter", "guidelines", "faq"))
+                     if re.search(r"/" + name + r"(?:[/.?#]|$)", href, re.I)), 99))
+                for href in parser.attachments + rule_links:
+                    attachment = urljoin(fetched.url, href)
+                    if len(pending) < 4 and attachment not in pending and allowed_url(attachment, self.hosts):
+                        pending.append(attachment)
         return sources
 
 
@@ -201,6 +196,7 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
             }
         candidate.category = "ai_competition"
+        candidate.competition["fetch_report"] = list(self.last_report)
         campus = candidate.search_term.startswith("announcement:")
         candidate.competition["discovery_signal"] = (
             "公開公告／徵件網站線索，參賽人數未知" if campus

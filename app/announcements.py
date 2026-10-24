@@ -13,6 +13,7 @@ import httpx
 
 from app.competitions import allowed_url, normalize
 from app.models import Candidate
+from app.public_fetch import fetch_public
 
 
 CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|contest|competition|call for entr|open call|awards?|film festival|challenge", re.I)
@@ -101,22 +102,14 @@ class AnnouncementSource:
                     errors += 1
                     self.last_report.append({"url": url, "status": "unsupported"})
                     continue
-                try:
-                    async with client.stream("GET", url) as response:
-                        response.raise_for_status()
-                        content_type = response.headers.get("content-type", "").lower()
-                        if not any(kind in content_type for kind in ("html", "xml", "rss", "atom")):
-                            raise ValueError("Unsupported announcement page")
-                        body = bytearray()
-                        async for chunk in response.aiter_bytes(chunk_size=16384):
-                            body.extend(chunk)
-                            if len(body) > 1_000_000:
-                                raise ValueError("Announcement page too large")
-                    leads = entries(bytes(body).decode("utf-8", errors="replace"), url, self.hosts)
-                    self.last_report.append({"url": url, "status": "ok", "leads": len(leads)})
-                    for candidate in leads:
-                        candidates.setdefault(candidate.permalink, candidate)
-                except (httpx.HTTPError, ValueError) as exc:
+                page = await fetch_public(client, url, lambda target: allowed_url(target, self.hosts))
+                if page.status != "ok" or "application/pdf" in page.content_type:
                     errors += 1
-                    self.last_report.append({"url": url, "status": type(exc).__name__})
+                    self.last_report.append({"url": url, "status": page.status, "attempts": page.attempts})
+                    continue
+                leads = entries(page.text(), page.url, self.hosts)
+                self.last_report.append({"url": url, "resolved_url": page.url, "status": "ok",
+                                         "leads": len(leads), "attempts": page.attempts})
+                for candidate in leads:
+                    candidates.setdefault(candidate.permalink, candidate)
         return list(candidates.values()), errors
