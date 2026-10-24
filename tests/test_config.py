@@ -66,3 +66,22 @@ def test_production_requires_https_public_url(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="HTTPS"):
         settings.validate_production()
+
+
+def test_custom_collaboration_terms_do_not_disable_new_competition_terms(monkeypatch):
+    monkeypatch.setenv("THREADS_SEARCH_TERMS", "custom internship")
+    monkeypatch.delenv("COMPETITION_SEARCH_TERMS", raising=False)
+    configured = Settings.from_env(require_secrets=False)
+    assert configured.threads_search_terms == ("custom internship",)
+    assert "線上競賽" in configured.competition_search_terms
+    assert "AI competition" in configured.competition_search_terms
+
+
+def test_competition_search_can_be_disabled_and_budget_is_bounded(monkeypatch):
+    monkeypatch.setenv("COMPETITION_SEARCH_TERMS", "")
+    monkeypatch.setenv("COMPETITION_SCREEN_LIMIT", "100")
+    configured = Settings.from_env(require_secrets=False)
+    assert configured.competition_search_terms == ()
+    assert configured.competition_screen_limit == 10
+    monkeypatch.setenv("COMPETITION_SCREEN_LIMIT", "-1")
+    assert Settings.from_env(require_secrets=False).competition_screen_limit == 0

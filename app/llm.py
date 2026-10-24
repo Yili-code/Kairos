@@ -71,18 +71,62 @@ class GeminiClient:
         raise RuntimeError("Gemini assessment failed")
 
     async def _assess_with_model(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._validate(await self._request_json(model, payload))
+
+    async def screen_competition(self, candidate: Candidate, sources: dict[str, str]) -> dict[str, Any]:
+        from app.competitions import EFFORT_STAGES, FACTS, screening_prompt
+
+        if not self.api_key:
+            raise RuntimeError("Competition screening requires the existing Gemini configuration")
+        fact_schema = {
+            "type": "object", "required": ["value", "quote", "url"],
+            "properties": {name: {"type": "string"} for name in ("value", "quote", "url")},
+        }
+        schema = {
+            "type": "object", "required": ["facts", "estimate"],
+            "properties": {
+                "facts": {"type": "object", "required": list(FACTS),
+                          "properties": {key: fact_schema for key in FACTS}},
+                "estimate": {
+                    "type": "object", "required": [*EFFORT_STAGES, "ai_share", "extra_tools_twd", "plan", "uncertain"],
+                    "properties": {
+                        **{key: {"type": ["number", "null"]} for key in (*EFFORT_STAGES, "ai_share", "extra_tools_twd")},
+                        "plan": {"type": "string"}, "uncertain": {"type": "boolean"},
+                    },
+                },
+            },
+        }
+        payload = {
+            "contents": [{"parts": [{"text": screening_prompt(candidate, sources)}]}],
+            "generationConfig": {
+                "responseFormat": {"text": {"mimeType": "APPLICATION_JSON", "schema": schema}},
+                "temperature": 0.1,
+            },
+        }
+        # Reuse the existing configured fallback only for transient failures, once per model.
+        for model in dict.fromkeys(item for item in (self.model, self.fallback_model) if item):
+            try:
+                return await self._request_json(model, payload, attempts=1)
+            except GeminiTransientError:
+                if model == (self.fallback_model or self.model):
+                    raise
+        raise RuntimeError("Competition screening failed")
+
+    async def _request_json(self, model: str, payload: dict[str, Any], *, attempts: int = 2) -> dict[str, Any]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(2):
+            for attempt in range(attempts):
                 try:
                     response = await client.post(url, headers={"x-goog-api-key": self.api_key}, json=payload)
                     response.raise_for_status()
                     data = response.json()
                     text = data["candidates"][0]["content"]["parts"][0]["text"]
                     parsed = json.loads(text)
-                    return self._validate(parsed)
+                    if not isinstance(parsed, dict):
+                        raise ValueError("Expected a JSON object")
+                    return parsed
                 except httpx.HTTPStatusError as exc:
-                    if attempt == 0 and exc.response.status_code in {429, 500, 502, 503, 504}:
+                    if attempt + 1 < attempts and exc.response.status_code in {429, 500, 502, 503, 504}:
                         await asyncio.sleep(1.5)
                         continue
                     try:
@@ -98,7 +142,7 @@ class GeminiClient:
                         raise GeminiTransientError(error) from None
                     raise RuntimeError(error) from None
                 except httpx.HTTPError:
-                    if attempt == 0:
+                    if attempt + 1 < attempts:
                         await asyncio.sleep(1.5)
                         continue
                     raise GeminiTransientError("Gemini assessment transport failed") from None

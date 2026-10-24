@@ -13,6 +13,7 @@ class Repository(Protocol):
     def create_if_absent(self, candidate: Candidate) -> bool: ...
     def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]: ...
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None: ...
+    def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
 
 
 class InMemoryRepository:
@@ -43,6 +44,14 @@ class InMemoryRepository:
         candidate.status = "sending"
         candidate.approval_hash = draft_hash
         candidate.send_attempt_id = attempt_id
+        self.save(candidate)
+        return candidate
+
+    def claim_for_card(self, candidate_id: str) -> Candidate | None:
+        candidate = self.get(candidate_id)
+        if not candidate or candidate.status != "discovered":
+            return None
+        candidate.status = "telegram_sending"
         self.save(candidate)
         return candidate
 
@@ -77,6 +86,25 @@ class FirestoreRepository:
             return []
         query = self.collection.where("status", "in", values).limit(limit)
         return [Candidate.from_dict(doc.to_dict()) for doc in query.stream()]
+
+    def claim_for_card(self, candidate_id: str) -> Candidate | None:
+        from google.cloud import firestore
+
+        reference = self.collection.document(candidate_id)
+
+        @firestore.transactional
+        def claim(transaction):
+            snapshot = reference.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            data = snapshot.to_dict()
+            if data.get("status") != "discovered":
+                return None
+            data.update(status="telegram_sending", updated_at=datetime.now(UTC).isoformat())
+            transaction.update(reference, {"status": data["status"], "updated_at": data["updated_at"]})
+            return Candidate.from_dict(data)
+
+        return claim(self.client.transaction())
 
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None:
         from google.cloud import firestore

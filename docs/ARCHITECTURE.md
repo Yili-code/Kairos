@@ -14,6 +14,24 @@
 
 ## State transitions
 
+### Competition branch
+
+Direct-entry contests use `ai_competition`, not collaboration questionnaires. Threads keywords discover candidates; `/competition <url>` also supports owner-requested official-page review. The category excludes existing internship/paid-project classifications and explicit hackathon teammate recruitment.
+
+`CompetitionScreener` fetches at most two allowlisted HTTPS pages without redirects, proxies, query strings or credentials. Each page is capped at 256 KB and 32,000 text characters. It extracts visible text and sends only those fetched sources and the untrusted post to the existing Gemini model. Each fact includes a value, verbatim quote and exact source URL; unmatched quotes/URLs are downgraded to unknown. No source pages means no model call. Network/schema/model failure produces a pending report.
+
+The deterministic evaluator owns limits: six hours summed across planning, generation/wait, review, submission and finals; AI production share at least 0.90; extra tools at most NT$300. Paid registration requires an evidenced amount/currency but has no invented monetary cap. Cash prizes, public recognition, public display rights, eligibility, deadline timezone and all-round attendance must be supported. Uncertainty prevents eligibility. Source-derived facts and model estimates are separately stored on the backward-compatible `Candidate.competition` map.
+
+Reports are `eligible`, `pending`, or `rejected`. Only eligible/pending cards are delivered; eligible cards rank above pending, with bonuses for free registration and no presentation. At most one pending card is sent per scan, within the existing total card cap. Undelivered `discovered` records form a durable queue. Official event URLs generate a stable short ID, deduplicating different social posts for one supported event. Each scan performs at most the configured number of new screens; unprocessed candidates are not persisted as screened.
+
+Card delivery uses an atomic `discovered → telegram_sending` claim in Firestore, so overlapping scans cannot both deliver the same queued record. Expired queued contests are skipped before delivery. Model analysis reuses the existing configured fallback only for transient failures, with one request per configured model per screen.
+
+Competition cards expose source/skip only. Callback dispatch blocks every non-skip action for this category, and `_send_approved` independently blocks it even with a forged ready draft. Owner-requested rechecks reuse the same event ID; uncertain Telegram delivery is not automatically replayed. No model output can authorize registration, payment, submission, or contact.
+
+Source coverage is deliberately bounded: this is Threads discovery plus allowlisted official-page review, not a search-engine crawler. Dynamic, blocked, PDF or incomplete sources remain pending. Quote matching establishes provenance, not correctness of a model's semantic interpretation; each card links the original rules for owner review. ChatGPT subscription quota is used by the human's later production workflow, not by the server.
+
+### Collaboration branch
+
 `discovered → telegram_sending → telegram_sent → questionnaire → evaluated → draft_ready → sending → sent`
 
 Terminal or intervention states are `skipped`, `telegram_uncertain`, `dm_unavailable`, `send_failed`, and `send_uncertain`.

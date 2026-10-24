@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from app.config import Settings
+from app.competitions import CompetitionScreener
 from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
 from app.llm import GeminiClient
 from app.storage import FirestoreRepository, InMemoryRepository
@@ -29,19 +30,19 @@ def build_workflow(settings: Settings) -> Workflow:
         if settings.dm_automation_enabled
         else DisabledDMSender()
     )
+    llm = GeminiClient(settings.gemini_api_key, settings.gemini_model,
+                       fallback_model=settings.gemini_fallback_model)
     return Workflow(
         repository=repository,
         threads=ThreadsClient(settings.threads_api_base, settings.threads_access_token),
         telegram=TelegramClient(settings.telegram_bot_token, settings.telegram_owner_chat_id),
-        llm=GeminiClient(
-            settings.gemini_api_key,
-            settings.gemini_model,
-            fallback_model=settings.gemini_fallback_model,
-        ),
+        llm=llm,
         dm_sender=dm_sender,
         shortlist_threshold=settings.shortlist_threshold,
         per_term_limit=settings.discovery_limit_per_term,
         max_cards=settings.telegram_max_cards_per_run,
+        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts),
+        competition_screen_limit=settings.competition_screen_limit,
     )
 
 
@@ -76,6 +77,8 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             "gemini_configured": bool(settings.gemini_api_key),
             "threads_search_configured": bool(settings.threads_access_token),
             "dm_automation_enabled": settings.dm_automation_enabled,
+            "competition_discovery_enabled": bool(settings.competition_search_terms),
+            "competition_screen_limit": settings.competition_screen_limit,
         }
 
     @api.post("/tasks/discover")
@@ -84,7 +87,8 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             raise HTTPException(status_code=403, detail="Forbidden")
         if not settings.threads_access_token:
             raise HTTPException(status_code=503, detail="Threads search is not configured")
-        return await active_workflow.discover(settings.threads_search_terms)
+        terms = tuple(dict.fromkeys((*settings.threads_search_terms, *settings.competition_search_terms)))
+        return await active_workflow.discover(terms)
 
     @api.post("/telegram/webhook")
     async def telegram_webhook(

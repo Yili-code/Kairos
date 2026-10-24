@@ -1,26 +1,23 @@
-# Kairos production status
+# Kairos verification record
 
-Last verified: 2026-10-05 (Asia/Taipei)
+Verification date: 2026-10-24 (Asia/Taipei). This file records pre-rollout evidence for the competition feature; verify the deployed revision independently with the production smoke script.
 
-## Live evidence
+## Existing production baseline
 
-- Cloud Run revision `kairos-00007-xgt` serves 100% of traffic and `/health` returns `ok`.
-- Firestore database `thread-opportunity` is reachable and currently contains zero opportunity documents.
-- The Free Tier Gemini key successfully produced a schema-valid Kairos assessment and draft through the `gemini-3.5-flash` to `gemini-3.5-flash-lite` fallback chain.
-- Forty-three local tests pass, including route-boundary, Threads-contract, evidence-integrity, scoring-boundary, configuration fail-closed, uncertain-delivery, and stale-callback coverage.
-- `PUBLIC_BASE_URL` is configured.
-- DM automation remains disabled.
-- Invalid scheduler and Telegram webhook secrets both receive HTTP 403, and the deployed revision has no error-level log entries from the verification window.
-- The runtime service account has a database-conditioned Datastore role for `thread-opportunity` and Secret Manager access only on the six named Kairos secrets.
-- An OSV audit found no known vulnerability in the five directly pinned production packages. Full transitive resolution timed out and remains unverified.
+- Cloud Run service `kairos`, project `yili-chronos-prod`, region `asia-east1`, served revision `kairos-git-75ce1b0` before this change.
+- The live health endpoint returned `ok`, production mode, configured Firestore/Gemini/Threads, and disabled DM automation.
+- Scheduler `kairos-opportunity-scan` was enabled for `0 8,20 * * *` in `Asia/Taipei`; its last attempt was 2026-10-24 at 08:00 Taiwan time with no reported status error.
+- Existing secrets and runtime identity are reused. No new paid provider, automatic registration, payment, entry submission, or outreach permission is introduced.
 
-## Activation gates
+## Competition feature validation
 
-1. The Threads access-token secret has no enabled version. Discovery cannot run.
-2. The Telegram bot is valid, but no webhook is registered. Confirm that the previously exposed token was revoked before registration.
-3. No Cloud Scheduler job exists. The configuration helper refuses activation until Threads is configured and `APP_ENV=production`.
-4. The Threads browser-DM adapter has not passed a controlled test-account selector check. Do not enable it before that check.
+- Python 3.12 local validation: **111 tests passed**. Coverage includes official-quote provenance, hard policy limits, unknown facts, deadline timezone and expiry, cash versus noncash prizes, separate registration fees, bounded requests and screen count, event deduplication, durable card queue, atomic card claims, unsafe links, oversized rules, Unicode card limits, and blocked contest outreach paths.
+- Compilation succeeded for application, scripts and tests.
+- A read-only real-rule/model check against `https://hackthenet2026.devpost.com/rules` fetched one official page and validated nine evidenced facts. The report rejected the entry, including AI-use, eligibility, deadline, and workload conflicts. This was an integration sample, not a recommended contest.
+- The configured primary model returned a transient HTTP 503 during validation. Competition analysis now uses the existing configured fallback on transient failures, with one attempt per model. The configured models were not changed.
 
-## Evidence boundary
+## Rollout verification
 
-Cloud Run health proves process readiness only. It does not prove live Threads discovery, Telegram interaction, or private-message delivery. Production readiness remains false until the activation gates above are completed and one controlled end-to-end candidate reaches Telegram without sending a DM.
+`scripts/verify_competition_screening.py` is read-only and sends no Telegram messages. `scripts/verify_competition_production.py` has explicit production side effects: it sends a clearly labeled owner-only test card, persists that synthetic test record, runs one real organizer-rule review through the deployed Telegram webhook, and optionally runs a production discovery scan with `--discover`.
+
+The synthetic card is not evidence of a real qualifying contest or a human reading it. Live page/model validation is not evidence of award probability, six-hour production performance, or complete contest coverage. Quote matching establishes source provenance; the owner still checks the organizer's actual terms before entering. Threads DM delivery remains disabled and unverified.

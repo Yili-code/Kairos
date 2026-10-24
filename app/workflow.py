@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from app.dm_sender import DMUnavailable, DMSenderError
+from app.competitions import allowed_url, rules_urls
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
@@ -30,6 +32,8 @@ class Workflow:
         shortlist_threshold: int,
         per_term_limit: int,
         max_cards: int,
+        competition_screener: Any = None,
+        competition_screen_limit: int = 3,
     ) -> None:
         self.repository = repository
         self.threads = threads
@@ -39,10 +43,14 @@ class Workflow:
         self.shortlist_threshold = shortlist_threshold
         self.per_term_limit = per_term_limit
         self.max_cards = max_cards
+        self.competition_screener = competition_screener
+        self.competition_screen_limit = competition_screen_limit
 
     async def discover(self, terms: tuple[str, ...]) -> dict[str, int]:
         created: list[Candidate] = []
         errors = 0
+        screened = 0
+        competition_errors = 0
         for term in terms:
             candidates = None
             for _ in range(2):
@@ -55,20 +63,67 @@ class Workflow:
                 errors += 1
                 continue
             for candidate in candidates:
+                if self.repository.get(candidate.id):
+                    continue
                 apply_score(candidate)
+                if candidate.category == "ai_competition":
+                    urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
+                    if urls:
+                        candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
+                        if self.repository.get(candidate.id):
+                            continue
+                    if not self.competition_screener or screened >= self.competition_screen_limit:
+                        # Do not persist unprocessed candidates: a later scan may screen them.
+                        continue
+                    screened += 1
+                    await self.competition_screener.screen(candidate)
+                    if not candidate.competition.get("facts"):
+                        competition_errors += 1
+                    if candidate.competition.get("decision") == "rejected":
+                        candidate.status = Status.SKIPPED
                 if self.repository.create_if_absent(candidate):
                     created.append(candidate)
 
-        shortlist = sorted(
-            (candidate for candidate in created if candidate.first_round_score >= self.shortlist_threshold),
+        # Keep cards beyond this run's delivery cap in a durable queue.
+        queued = {candidate.id: candidate for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=100)}
+        queued.update({candidate.id: candidate for candidate in created})
+        ranked = sorted(
+            (candidate for candidate in queued.values() if (
+                candidate.first_round_score >= self.shortlist_threshold
+                if candidate.category != "ai_competition"
+                else candidate.competition.get("decision") in {"eligible", "pending"}
+            )),
             key=lambda candidate: candidate.first_round_score,
             reverse=True,
-        )[: self.max_cards]
+        )
+        shortlist = []
+        pending_selected = False
+        for candidate in ranked:
+            if candidate.category == "ai_competition":
+                deadline = candidate.competition.get("facts", {}).get("deadline", {}).get("value", "unknown")
+                try:
+                    closing = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    closing = None
+                if closing and closing.tzinfo and closing <= datetime.now(UTC):
+                    candidate.competition["decision"] = "rejected"
+                    candidate.competition["blockers"] = ["已截止"]
+                    candidate.status = Status.SKIPPED
+                    self.repository.save(candidate)
+                    continue
+            pending = candidate.category == "ai_competition" and candidate.competition.get("decision") == "pending"
+            if pending and pending_selected:
+                continue
+            if len(shortlist) >= self.max_cards:
+                break
+            shortlist.append(candidate)
+            pending_selected = pending_selected or pending
         sent = 0
         card_errors = 0
         for candidate in shortlist:
-            candidate.status = Status.TELEGRAM_SENDING
-            self.repository.save(candidate)
+            candidate = self.repository.claim_for_card(candidate.id)
+            if not candidate:
+                continue
             try:
                 candidate.telegram_message_id = await self.telegram.send_candidate(candidate)
             except RuntimeError:
@@ -87,6 +142,8 @@ class Workflow:
             "cards_sent": sent,
             "card_errors": card_errors,
             "search_errors": errors,
+            "competitions_screened": screened,
+            "competition_errors": competition_errors,
         }
 
     async def handle_callback(self, callback_id: str, data: str) -> None:
@@ -98,6 +155,11 @@ class Workflow:
         candidate = self.repository.get(candidate_id)
         if not candidate:
             await self.telegram.answer_callback(callback_id, "Opportunity not found")
+            return
+
+        if candidate.category == "ai_competition" and action != "skip":
+            # Contests are research/recommendation only, including forged/old approval callbacks.
+            await self.telegram.answer_callback(callback_id, "競賽只提供評估，請自行決定報名與交件")
             return
 
         if action == "skip":
@@ -236,6 +298,36 @@ class Workflow:
         await self.telegram.answer_callback(callback_id, "This action is no longer active")
 
     async def handle_text(self, text: str, *, reply_to_text: str = "") -> bool:
+        if text.split(maxsplit=1)[0:1] == ["/competition"]:
+            parts = text.split(maxsplit=1)
+            url = parts[1].strip() if len(parts) == 2 else ""
+            hosts = getattr(self.competition_screener, "hosts", ())
+            if not self.competition_screener or not allowed_url(url, hosts):
+                await self.telegram.notify("用法：/competition https://活動主辦頁面\n目前支援 Devpost、Kaggle、獎金獵人；不接受追蹤參數或轉址連結。")
+                return True
+            source = rules_urls(url, hosts)[0]
+            candidate_id = "contest-" + hashlib.sha256(source.encode()).hexdigest()[:24]
+            candidate = self.repository.get(candidate_id)
+            if candidate and candidate.status in {Status.TELEGRAM_SENDING, Status.TELEGRAM_UNCERTAIN}:
+                await self.telegram.notify("前次卡片送達結果尚未確認，請先檢查 Telegram，避免重複發送。")
+                return True
+            candidate = candidate or Candidate(candidate_id, "organizer", url, url, "", "/competition")
+            await self.competition_screener.screen(candidate)
+            if candidate.competition.get("decision") == "rejected":
+                candidate.status = Status.SKIPPED
+                self.repository.save(candidate)
+                await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
+                return True
+            candidate.status = Status.TELEGRAM_SENDING
+            self.repository.save(candidate)
+            try:
+                candidate.telegram_message_id = await self.telegram.send_candidate(candidate)
+            except RuntimeError:
+                candidate.status = Status.TELEGRAM_UNCERTAIN
+            else:
+                candidate.status = Status.TELEGRAM_SENT
+            self.repository.save(candidate)
+            return True
         waiting = self.repository.find_by_status([Status.QUESTIONNAIRE, Status.DRAFT_READY], limit=20)
         candidates = [
             candidate for candidate in waiting
@@ -333,6 +425,9 @@ class Workflow:
         await self.telegram.send_draft(candidate)
 
     async def _send_approved(self, candidate: Candidate) -> None:
+        if candidate.category == "ai_competition":
+            await self.telegram.notify("競賽不支援代為聯繫、報名、付費或交件。")
+            return
         if candidate.status != Status.DRAFT_READY or not candidate.draft_message:
             await self.telegram.notify("Send blocked: there is no current draft ready for approval.")
             return

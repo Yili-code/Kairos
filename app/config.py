@@ -41,6 +41,12 @@ class Settings:
     shortlist_threshold: int
     dm_automation_enabled: bool
     threads_storage_state_json: str
+    competition_search_terms: tuple[str, ...] = (
+        "AI competition", "online contest", "AI film competition", "design competition",
+        "線上競賽", "AI 競賽", "徵件 獎金", "生成式 AI 徵件",
+    )
+    competition_screen_limit: int = 3
+    competition_rules_hosts: tuple[str, ...] = ("devpost.com", "kaggle.com", "bhuntr.com")
 
     def validate_production(self) -> None:
         required = {
@@ -103,4 +109,12 @@ class Settings:
             shortlist_threshold=int(os.getenv("SHORTLIST_THRESHOLD", "55")),
             dm_automation_enabled=_as_bool("THREADS_DM_AUTOMATION_ENABLED"),
             threads_storage_state_json=storage_state,
+            competition_search_terms=tuple(item.strip() for item in os.getenv(
+                "COMPETITION_SEARCH_TERMS",
+                "AI competition,online contest,AI film competition,design competition,線上競賽,AI 競賽,徵件 獎金,生成式 AI 徵件",
+            ).split(",") if item.strip()),
+            competition_screen_limit=max(0, min(10, int(os.getenv("COMPETITION_SCREEN_LIMIT", "3")))),
+            competition_rules_hosts=tuple(item.strip().lower() for item in os.getenv(
+                "COMPETITION_RULES_HOSTS", "devpost.com,kaggle.com,bhuntr.com",
+            ).split(",") if item.strip()),
         )

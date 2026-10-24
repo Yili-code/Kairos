@@ -1,13 +1,13 @@
 # Kairos
 
-Kairos is an owner-only opportunity funnel for YiLi. It finds public Threads posts about hackathons, internships, and paid projects; performs a conservative first-pass screen; asks button-first questions in Telegram; produces an evidence-grounded fit assessment and private-message draft; and sends only the exact draft YiLi approves.
+Kairos is an owner-only opportunity funnel for YiLi. It finds public Threads posts about hackathons, internships, paid projects, and AI-assisted online competitions. Collaboration opportunities use a button-first Telegram questionnaire and an evidence-grounded private-message draft sent only after exact-draft approval. Competitions use a separate rules-and-effort assessment and never enter the outreach workflow.
 
 This is intentionally not an autonomous outreach bot. Discovery can run unattended. External communication cannot.
 
 ## Current scope
 
-- Threads only; source adapters can be added later.
-- Priority: hackathon, internship, paid project.
+- Discovery uses Threads; supported organizer pages can also be reviewed with `/competition <https-url>` in the owner Telegram chat.
+- Existing priorities remain hackathon, internship, paid project; direct-entry competitions are screened independently.
 - Schedule: 08:00 and 20:00 Asia/Taipei.
 - Maximum three new Telegram opportunity cards per run.
 - English and Traditional Chinese discovery terms are enabled by default.
@@ -23,6 +23,37 @@ This is intentionally not an autonomous outreach bot. Discovery can run unattend
 The official Threads API is suitable for keyword discovery, while Threads DM currently requires a separate UI adapter. Keeping those boundaries separate prevents a login expiry or UI redesign from stopping discovery and preserves a strict human approval gate.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the state machine and failure policy.
+
+## AI-assisted online competitions
+
+The goal is cash prizes and publicly demonstrable awards, with AI doing at least 90% of production. Taiwan and international contests, English submissions, and any artifact type are in scope. Online finalist Q&A is acceptable; physical attendance is not.
+
+- Maximum **six total hours per contest**, including planning, AI generation/waiting, review, submission, preparation, revisions, and later-round Q&A. Waiting for judging results is not work time.
+- Prefer the existing ChatGPT subscription. Additional tools, API calls, compute, or hosting for an entry must fit **NT$300 per contest**. Registration fees are separate, displayed explicitly, and require YiLi's own decision. No fee is paid automatically.
+- Prefer free registration and no presentation. Paid entry and online finals may qualify but rank lower.
+- Explicit substantial-AI permission is required. An AI theme, an AI API requirement, or silence about AI does not establish permission for AI to produce the work.
+- Official evidence is required for deadlines/timezones, cash prizes, public winner recognition, eligibility, entry format, finalist/award attendance, public-display rights, deliverables, and IP terms. Missing facts remain **pending**, never inferred as free or allowed.
+- All time, production-share, and tool-cost estimates are visibly labeled AI estimates. Passing the filter does not predict an award or guarantee six-hour completion. Unbounded estimates remain pending.
+
+Competition search terms are separate from existing Threads terms, so existing installations receive the new category without overwriting customized collaboration searches. Automatic screening is capped at three new contests per run; at most one pending card is delivered within the existing three-card total limit. Additional undelivered cards stay in Firestore for later runs. Known event URLs deduplicate multiple social posts for the same contest.
+
+Rules are fetched only from configured HTTPS organizer-platform hosts (default: `devpost.com`, `kaggle.com`, `bhuntr.com`). Fetching is bounded, refuses redirects/query strings/credentials, and ignores scripts. Devpost event links also request `/rules`. Quoted evidence must occur in a successfully fetched page at its exact URL. Unsupported sites, anti-bot responses, script-only pages, PDFs, and truncated rules remain pending; the system does not claim comprehensive web discovery or independent legal interpretation.
+
+Send `/competition https://event.devpost.com/rules` in Telegram to request a fresh review or recheck a known event. This command may update its assessment and send a card; it does not draft contact messages. Competition cards have only source and skip buttons. All competition callbacks and direct-send paths reject outreach, registration, payment, and submission.
+
+Cloud Run continues to use the existing Gemini API configuration for screening. **ChatGPT subscription quota is not API credit** and is not called by the server; the subscription preference concerns making contest entries, not replacing Kairos's existing model backend. No new paid service is required by this feature.
+
+| Optional variable | Default / meaning |
+|---|---|
+| `COMPETITION_SEARCH_TERMS` | Eight bilingual competition searches; empty disables scheduled competition searches |
+| `COMPETITION_SCREEN_LIMIT` | `3`, bounded to 0–10 new contest analyses per scan |
+| `COMPETITION_RULES_HOSTS` | `devpost.com,kaggle.com,bhuntr.com`; administrator-controlled HTTPS fetch allowlist |
+
+Read-only official-page/model verification (uses the existing authenticated Google Cloud account, writes no Firestore data, sends no Telegram message):
+
+```powershell
+.venv\Scripts\python scripts\verify_competition_screening.py https://event.devpost.com/rules
+```
 
 ## Local quick start
 

@@ -36,6 +36,7 @@ class Candidate:
     first_round_score: int = 0
     reasons: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+    competition: dict[str, Any] = field(default_factory=dict)
     status: str = Status.DISCOVERED
     answers: dict[str, str] = field(default_factory=dict)
     fit_score: int | None = None

@@ -12,6 +12,19 @@ CATEGORY_PATTERNS = {
     "paid_project": ("paid project", "freelance", "contract", "commission", "接案", "有薪合作"),
 }
 
+COMPETITION_TERMS = (
+    "competition", "contest", "challenge", "call for entries", "競賽", "比賽", "徵件",
+)
+COMPETITION_SIGNALS = (
+    "submit", "submission", "entries", "prize", "award", "deadline", "cash",
+    "online", "交件", "投稿", "獎金", "徵件", "截止", "報名",
+)
+
+
+def is_competition(text: str) -> bool:
+    normalized = text.lower()
+    return _contains(normalized, COMPETITION_TERMS) and _contains(normalized, COMPETITION_SIGNALS)
+
 SKILL_TERMS = (
     "python",
     "fastapi",
@@ -81,6 +94,12 @@ def score_post(text: str) -> ScoreResult:
             base = {"hackathon": 35, "internship": 30, "paid_project": 25}[name]
             break
 
+    # Keep team recruitment in its existing funnel; direct-entry contests get a separate policy.
+    if is_competition(normalized) and category not in {"internship", "paid_project"}:
+        recruiting = _contains(normalized, ("teammate", "team member", "徵隊友", "組隊"))
+        if not recruiting:
+            category, base = "ai_competition", 45
+
     reasons: list[str] = []
     risks: list[str] = []
     score = base
@@ -129,7 +148,7 @@ def score_post(text: str) -> ScoreResult:
         score -= 18
         risks.append("Onsite location is outside the confirmed Taipei or Keelung range")
 
-    if _contains(normalized, UPFRONT_PAYMENT_TERMS):
+    if category != "ai_competition" and _contains(normalized, UPFRONT_PAYMENT_TERMS):
         score -= 60
         risks.append("Upfront payment requirement is a high-risk signal")
 
