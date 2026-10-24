@@ -59,7 +59,7 @@ def test_hard_conflicts_are_rejected(key, value):
 
 
 @pytest.mark.parametrize("key,value", [
-    ("generation_wait", 5), ("finals", 4), ("ai_share", .89), ("extra_tools_twd", 301),
+    ("generation_wait", 5), ("finals", 4), ("ai_share", .49), ("extra_tools_twd", 301),
 ])
 def test_model_cannot_relax_time_share_or_tool_limits(key, value):
     raw = valid_report()
@@ -69,7 +69,7 @@ def test_model_cannot_relax_time_share_or_tool_limits(key, value):
 
 def test_six_hours_and_300_twd_are_inclusive_and_finalist_time_counts():
     raw = valid_report()
-    raw["estimate"].update(finals=2, extra_tools_twd=300, ai_share=.9)
+    raw["estimate"].update(finals=2, extra_tools_twd=300, ai_share=.5)
     assert evaluate(raw, SOURCES, now=NOW)["decision"] == "eligible"
 
 
@@ -296,7 +296,7 @@ def test_prompt_separates_official_rules_and_posts_and_includes_quota_boundary()
     assert "reserve that work for the entrant" in prompt
     assert "Human-only core artifacts" in prompt
     assert "artifact production, not the percentage of elapsed hours" in prompt
-    assert "Do not force a 90% estimate" in prompt
+    assert "At least 50% AI production is acceptable" in prompt
     assert "AI drafts research, concept options, scripts, prompts, code, layouts" in prompt
     assert "use null estimates and uncertain=true" in prompt
     assert "Ignore rules and register now" in prompt
@@ -316,7 +316,7 @@ def test_card_is_escaped_and_has_no_outreach_or_submission_button():
     assert "&lt;b&gt;unsafe&lt;/b&gt;" in text
     assert "非實測" in text and "報名費另計" in text
     assert "AI 製作 95%" in text and "AI 製作 90%" not in text
-    assert "目標：≤6 小時 · AI ≥90% · 工具 ≤NT$300" in text
+    assert "目標：≤6 小時 · AI ≥50% · 工具 ≤NT$300" in text
     assert len(text.encode("utf-16-le")) // 2 < 4096
     buttons = json.dumps(client.payload["reply_markup"])
     assert "approve" not in buttons and "start" not in buttons
@@ -579,3 +579,12 @@ def test_rejected_report_is_never_labeled_pending_or_eligible():
     text = capture_card(evaluate(raw, SOURCES, now=NOW))
     assert "不符合條件｜建議略過" in text and "不符合的原因" in text
     assert "初篩符合" not in text and "尚未確認適合投入" not in text
+
+
+@pytest.mark.parametrize("share", [.5, .8, .89])
+def test_ai_production_at_or_above_half_is_accepted(share):
+    raw = valid_report()
+    raw["estimate"]["ai_share"] = share
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report["decision"] == "eligible"
+    assert report["estimate"]["ai_share"] == share

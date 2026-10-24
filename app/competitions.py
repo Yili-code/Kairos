@@ -496,8 +496,8 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         estimate_conflicts.append("距離截止時間不足以完成預估流程")
     if share is None:
         blockers.append("AI 可完成比例無法估算")
-    elif share < 0.9:
-        estimate_conflicts.append("預估 AI 可完成比例低於 90%" + ("，分工尚待核實" if uncertain else ""))
+    elif share < 0.5:
+        estimate_conflicts.append("預估 AI 可完成比例低於 50%" + ("，分工尚待核實" if uncertain else ""))
     if tools is None:
         blockers.append("額外工具費無法估算")
     elif tools > 300:
@@ -578,7 +578,7 @@ ai_share is the estimated fraction of production done by AI (0..1), not odds of 
 ai_share measures artifact production, not the percentage of elapsed hours without human involvement.
 Human selection, key decisions and final acceptance still count toward total hours; they do not mean
 the entrant manually produced an AI-generated asset. Account for human-only artifact components explicitly.
-Do not force a 90% estimate; explain what the AI produces and what the entrant must produce.
+At least 50% AI production is acceptable. Do not inflate the estimate to meet this threshold; explain what the AI produces and what the entrant must produce.
 Provide production_components: 1-8 artifact components with name, weight (positive; sum exactly 1),
 ai_fraction (0..1), human_only (boolean), ai_work, human_work and tools (all nonempty strings).
 Each component also has rule_evidence_id, rule_quote and rule_url. human_only=true requires an explicit

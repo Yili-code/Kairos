@@ -103,7 +103,7 @@ class TelegramClient:
             lines.append("AI 估算：尚無可靠的耗時、製作比例與工具費估算")
         else:
             lines.extend([f"AI 估算：{time_text}（非實測）", f"AI 製作 {share_text}｜額外工具 {cost_text}"])
-        lines.append("目標：≤6 小時 · AI ≥90% · 工具 ≤NT$300")
+        lines.append("目標：≤6 小時 · AI ≥50% · 工具 ≤NT$300")
         if estimate.get('component_rule_issues'):
             lines.append('分工含未核實的人工限制，暫不採信這份製作計畫。')
         elif estimate.get('plan'):

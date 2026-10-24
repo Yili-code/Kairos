@@ -26,7 +26,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the state machine and failu
 
 ## AI-assisted online competitions
 
-The goal is cash prizes and publicly demonstrable awards, with AI doing at least 90% of production. Taiwan and international contests, English submissions, and any artifact type are in scope. Online finalist Q&A is acceptable; physical attendance is not.
+The goal is cash prizes and publicly demonstrable awards, with AI doing at least 50% of production. Taiwan and international contests, English submissions, and any artifact type are in scope. Online finalist Q&A is acceptable; physical attendance is not.
 
 - Maximum **six total hours per contest**, including planning, AI generation/waiting, review, submission, preparation, revisions, and later-round Q&A. Waiting for judging results is not work time.
 - Prefer the existing ChatGPT subscription. Additional tools, API calls, compute, or hosting for an entry must fit **NT$300 per contest**. Registration fees are separate, displayed explicitly, and require YiLi's own decision. No fee is paid automatically.
