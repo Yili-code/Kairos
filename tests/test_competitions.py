@@ -349,7 +349,8 @@ def test_pending_cards_are_capped_and_remaining_cards_survive_next_scan():
     workflow.max_cards = 3
     for i in range(3):
         candidate = Candidate(f"c{i}", "x", "contest", URL + f"?id={i}", "", "contest", category="ai_competition")
-        candidate.competition = {"decision": "pending", "facts": {"prize": {"value": "US$500", "quote": "A cash prize of US$500"}}}
+        candidate.competition = evaluate(valid_report(), SOURCES)
+        candidate.competition['decision'] = 'pending'
         repo.save(candidate)
     first = run_immediate(workflow.discover(()))
     second = run_immediate(workflow.discover(()))

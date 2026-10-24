@@ -82,12 +82,16 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
 
     def operational_status():
         from collections import Counter
+        from app.competition_decisions import assessment_current
+        from app.profile import PROFILE
         state = scan_store.status()
         if scan_repository:
             rows = scan_repository.find_by_status(['competition_pending_screen', 'competition_screening',
                 'discovered', 'telegram_sending', 'telegram_uncertain', 'telegram_failed', 'telegram_sent'], limit=500)
             state['queue'] = dict(Counter(row.status for row in rows))
             state['queue_sample_limit'] = 500
+            state['stale_sent_assessments'] = sum(row.status == 'telegram_sent' and row.category == 'ai_competition'
+                and not assessment_current(row.competition, PROFILE) for row in rows)
         return state
 
     @api.get("/health")

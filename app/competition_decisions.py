@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -14,6 +16,20 @@ TAIPEI = timezone(timedelta(hours=8))
 MONTHS = {name.lower(): number for number in range(1,13)
           for name in (calendar.month_name[number], calendar.month_abbr[number])}
 CLOSING = re.compile(r'截止|期限|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
+
+
+def evaluation_context(profile):
+    return hashlib.sha256(json.dumps({'profile': profile, 'policy': 'ai50-hours6-tools300-v1'},
+                                     sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def assessment_current(report, profile, *, now=None):
+    if report.get('context_hash') != evaluation_context(profile):return False
+    try:
+        checked = datetime.fromisoformat(report.get('checked_at', ''))
+        now = now or datetime.now(timezone.utc)
+        return bool(checked.tzinfo and now - timedelta(hours=24) <= checked <= now + timedelta(minutes=5))
+    except (TypeError, ValueError):return False
 
 
 def explicit_decision_conditions(sources):

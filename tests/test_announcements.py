@@ -255,7 +255,9 @@ def test_detached_firestore_style_records_are_delivered_after_screening():
         async def screen(self, candidate):
             candidate.category = "ai_competition"
             candidate.first_round_score = 90
-            candidate.competition = {"decision": "eligible", "facts": {"ai_policy": {"value": "broad_allowed"}}}
+            from app.competitions import evaluate
+            from tests.test_competitions import valid_report, SOURCES
+            candidate.competition = evaluate(valid_report(), SOURCES)
 
     workflow, _, telegram, sender = make_workflow()
     workflow.repository = DetachedRepo()

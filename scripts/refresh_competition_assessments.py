@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 ASSESSMENT_FIELDS = {
     'decision', 'rank', 'blockers', 'facts', 'sources', 'fact_diagnostics',
     'checked_at', 'verification_questions', 'estimate', 'fetch_report',
-    'source_hashes', 'discovery_signal', 'decision_conditions',
+    'source_hashes', 'discovery_signal', 'decision_conditions', 'context_hash',
 }
 
 

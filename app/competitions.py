@@ -19,7 +19,7 @@ import httpx
 from app.models import Candidate
 from app.public_fetch import fetch_public
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
 from app.profile import PROFILE
 
 
@@ -299,7 +299,9 @@ class CompetitionScreener:
         hashes = {url: hashlib.sha256(page.encode()).hexdigest() for url, page in sources.items()}
         try:
             raw = await self.llm.screen_competition(candidate, sources) if sources else {}
-            if sources and previous.get('source_hashes') == hashes and isinstance(raw, dict) and isinstance(raw.get('facts'), dict):
+            if (sources and previous.get('source_hashes') == hashes
+                    and previous.get('context_hash') == evaluation_context(PROFILE)
+                    and isinstance(raw, dict) and isinstance(raw.get('facts'), dict)):
                 for key, fact in previous.get('facts', {}).items():
                     fresh_fact = raw['facts'].get(key, {})
                     if (fact.get('value') != 'unknown' and isinstance(fresh_fact, dict) and fresh_fact.get('value', 'unknown') == 'unknown'
@@ -547,6 +549,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         "decision_conditions": conditions,
         'fact_diagnostics': diagnostics,
         "checked_at": now.isoformat(),
+        "context_hash": evaluation_context(PROFILE),
         'verification_questions': [{'field': key, 'question': question}
                                    for key, question in questions.items() if value(key) == 'unknown'],
         "estimate": {**stages, "total_hours": total, "ai_share": share,

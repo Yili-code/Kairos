@@ -9,7 +9,8 @@ from typing import Any
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls
-from app.competition_decisions import recommendation_identity
+from app.competition_decisions import recommendation_identity, assessment_current
+from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
@@ -70,7 +71,6 @@ class Workflow:
         rule_fetch_errors = 0
         model_rate_limited = False
         search_halted = False
-
         recovered_cards = 0
         for stuck in self.repository.find_by_status([Status.TELEGRAM_SENDING], limit=100):
             try:
@@ -84,8 +84,9 @@ class Workflow:
 
         def recover_empty_assessment(candidate):
             if (candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition'
-                    and candidate.competition.get('decision') == 'pending'
-                    and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values())):
+                    and ((candidate.competition.get('decision') == 'pending'
+                          and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values()))
+                         or not assessment_current(candidate.competition, PROFILE))):
                 candidate.status = Status.COMPETITION_PENDING_SCREEN
                 self.repository.save(candidate)
             return candidate
@@ -308,6 +309,10 @@ class Workflow:
         candidate = self.repository.get(candidate_id)
         if not candidate:
             await self.telegram.answer_callback(callback_id, "Opportunity not found")
+            return
+
+        if candidate.category == 'ai_competition' and action == 'do_it' and not assessment_current(candidate.competition, PROFILE):
+            await self.telegram.answer_callback(callback_id, '評估已過期或個人條件改變，請先用 /competition 網址重新核對。')
             return
 
         if candidate.category == "ai_competition" and action != "skip":
@@ -605,7 +610,7 @@ class Workflow:
             self.repository.save(candidate)
             await self.telegram.notify("Send result is uncertain. It will not be retried automatically; inspect Threads first.")
         else:
-            from datetime import UTC, datetime, timedelta
+            from datetime import UTC, datetime
 
             candidate.status = Status.SENT
             candidate.sent_at = datetime.now(UTC).isoformat()
