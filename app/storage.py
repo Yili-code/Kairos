@@ -46,6 +46,7 @@ class Repository(Protocol):
     def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
     def claim_for_screen(self, candidate_id: str) -> Candidate | None: ...
     def finish_card(self, candidate_id: str, attempt_id: str, status: str, **fields) -> bool: ...
+    def save_refresh(self, candidate: Candidate, expected: dict) -> bool: ...
 
 
 class InMemoryRepository:
@@ -63,6 +64,17 @@ class InMemoryRepository:
         if candidate.id in self.items:
             return False
         self.save(candidate)
+        return True
+
+    def save_refresh(self, candidate: Candidate, expected: dict) -> bool:
+        current = self.get(candidate.id)
+        if not current or current.status != 'telegram_sent' or current.to_dict() != expected:
+            return False
+        from copy import deepcopy
+        for field in ('competition', 'first_round_score', 'reasons', 'risks'):
+            setattr(current, field, deepcopy(getattr(candidate, field)))
+        self.save(current)
+        candidate.updated_at = current.updated_at
         return True
 
     def find_by_status(self, statuses: Iterable[str], limit: int | None = 50) -> list[Candidate]:
@@ -123,6 +135,29 @@ class FirestoreRepository:
     def save(self, candidate: Candidate) -> None:
         candidate.updated_at = datetime.now(UTC).isoformat()
         self.collection.document(candidate.id).set(candidate.to_dict(), merge=True, timeout=5, retry=None)
+
+    def save_refresh(self, candidate: Candidate, expected: dict) -> bool:
+        from google.cloud import firestore
+        reference = self.collection.document(candidate.id)
+
+        @firestore.transactional
+        def update(transaction):
+            snapshot = reference.get(transaction=transaction, timeout=5, retry=None)
+            row = snapshot.to_dict() if snapshot.exists else {}
+            if row.get('status') != 'telegram_sent' or Candidate.from_dict(row).to_dict() != expected:
+                return None
+            stamp = datetime.now(UTC).isoformat()
+            transaction.update(reference, {
+                **{field: getattr(candidate, field) for field in ('competition', 'first_round_score', 'reasons', 'risks')},
+                'updated_at': stamp,
+            })
+            return stamp
+
+        stamp = update(self.client.transaction())
+        if stamp is None:
+            return False
+        candidate.updated_at = stamp
+        return True
 
     def create_if_absent(self, candidate: Candidate) -> bool:
         from google.api_core.exceptions import AlreadyExists

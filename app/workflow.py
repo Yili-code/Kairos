@@ -207,6 +207,10 @@ class Workflow:
                     or (assessment_current(delivered.competition, PROFILE)
                         and not delivered.competition.get('update_pending'))):
                 continue
+            # Provider I/O may overlap an owner decision or a newer assessment.
+            from copy import deepcopy
+            delivered = deepcopy(delivered)
+            expected = delivered.to_dict()
             try:
                 if not delivered.competition.get('update_pending'):
                     if isinstance(self.competition_screener, CompetitionScreener):
@@ -215,11 +219,13 @@ class Workflow:
                         await self.competition_screener.screen(delivered)
                     screened += bool(delivered.competition.get('sources'))
                     delivered.competition['update_pending'] = True
-                    self.repository.save(delivered)
+                    if not self.repository.save_refresh(delivered, expected):
+                        continue
+                    expected = delivered.to_dict()
                 # Repeating an edit of the same message is safe after a lost acknowledgement.
                 await self.telegram.send_competition(delivered, edit=True)
                 delivered.competition['update_pending'] = False
-                self.repository.save(delivered)
+                self.repository.save_refresh(delivered, expected)
                 updates_sent += 1
             except Exception:
                 update_errors += 1
