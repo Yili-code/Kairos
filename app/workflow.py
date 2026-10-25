@@ -275,7 +275,7 @@ class Workflow:
         shortlist = []
         duplicate_cards_suppressed = 0
         seen_contests = {recommendation_identity(item) for item in self.repository.find_by_status(
-            [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN], limit=100) if item.category == 'ai_competition'}
+            [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN], limit=None) if item.category == 'ai_competition'}
         selected_contests = set()
         pending_selected = False
         for candidate in ranked:

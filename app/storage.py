@@ -41,7 +41,7 @@ class Repository(Protocol):
     def get(self, candidate_id: str) -> Candidate | None: ...
     def save(self, candidate: Candidate) -> None: ...
     def create_if_absent(self, candidate: Candidate) -> bool: ...
-    def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]: ...
+    def find_by_status(self, statuses: Iterable[str], limit: int | None = 50) -> list[Candidate]: ...
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None: ...
     def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
     def claim_for_screen(self, candidate_id: str) -> Candidate | None: ...
@@ -65,7 +65,7 @@ class InMemoryRepository:
         self.save(candidate)
         return True
 
-    def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]:
+    def find_by_status(self, statuses: Iterable[str], limit: int | None = 50) -> list[Candidate]:
         allowed = set(statuses)
         return sorted((item for item in self.items.values() if item.status in allowed),
                       key=lambda item: (item.updated_at, item.id))[:limit]
@@ -133,11 +133,13 @@ class FirestoreRepository:
         except AlreadyExists:
             return False
 
-    def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]:
+    def find_by_status(self, statuses: Iterable[str], limit: int | None = 50) -> list[Candidate]:
         values = list(statuses)
         if not values:
             return []
-        query = self.collection.where("status", "in", values).order_by("updated_at").limit(limit)
+        query = self.collection.where("status", "in", values).order_by("updated_at")
+        if limit is not None:
+            query = query.limit(limit)
         return [Candidate.from_dict(doc.to_dict()) for doc in query.stream(timeout=10, retry=None)]
 
     def claim_for_card(self, candidate_id: str) -> Candidate | None:

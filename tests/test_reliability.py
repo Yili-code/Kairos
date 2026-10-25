@@ -136,3 +136,27 @@ def test_repeated_origin_denials_leave_capacity_for_another_source():
     assert result['screen_origin_deferred'] == 10
     assert result['screen_completed'] == 1 and result['competition_source_errors'] == 2
 
+
+def test_notification_deduplication_reads_beyond_first_hundred_receipts():
+    workflow, repo, telegram, _ = make_workflow()
+    for i in range(101):
+        repo.save(Candidate('sent'+str(i), 'x', 'old generic card', 'https://example.test/'+str(i), '',
+                            'test', status=Status.TELEGRAM_SENT, telegram_message_id=i+1))
+    url = 'https://campus.edu.tw/entry?id=1&lang=tw'
+    prior = Candidate('prior', 'x', 'AI contest', url, '', 'test', category='ai_competition',
+        status=Status.TELEGRAM_SENT, telegram_message_id=999, competition=evaluate(valid_report(), SOURCES))
+    repo.save(prior)
+    class Source:
+        last_report = []
+        async def discover(self):
+            return [Candidate('duplicate', 'x', 'AI contest', 'https://campus.edu.tw/entry?lang=tw&id=1', '',
+                'announcement:test', category='ai_competition')], 0
+    class Screener:
+        hosts = ('edu.tw',)
+        async def screen(self, candidate):
+            candidate.competition = evaluate(valid_report(), SOURCES)
+    workflow.announcement_source = Source()
+    workflow.competition_screener = Screener()
+    result = run_immediate(workflow.discover(()))
+    assert result['cards_sent'] == 0 and telegram.cards == []
+    assert result['duplicate_competition_cards_suppressed'] == 1
