@@ -72,14 +72,16 @@ def test_manual_evidenced_review_can_recover_a_paused_item_without_resetting_his
     class Screener:
         hosts = ('edu.tw',)
         async def screen(self, candidate):
-            candidate.competition = {'decision': 'pending', 'facts': {'prize': {'quote': 'Cash prize'}},
-                'sources': [URL]}
+            from app.competitions import evaluate
+            from tests.test_competitions import valid_report, SOURCES
+            candidate.competition = evaluate(valid_report(), SOURCES)
 
     workflow.competition_screener = Screener()
     assert run_immediate(workflow.handle_text('/competition ' + URL))
-    assert row.screen_failure_streak == 0
-    assert row.screen_attempts == 3
-    assert row.status == Status.TELEGRAM_SENT
+    current = repo.get(row.id)
+    assert current.screen_failure_streak == 0
+    assert current.screen_attempts == 3
+    assert current.status == Status.TELEGRAM_SENT
 
 
 def test_paused_item_does_not_block_other_due_work():

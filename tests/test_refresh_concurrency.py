@@ -41,7 +41,9 @@ def test_owner_skip_during_telegram_edit_is_not_resurrected_by_completion():
 
     class Screener:
         async def screen(self, candidate):
-            candidate.competition = {'decision': 'pending', 'sources': []}
+            from app.competitions import evaluate
+            from tests.test_competitions import valid_report, SOURCES
+            candidate.competition = evaluate(valid_report(), SOURCES)
 
     async def edit(candidate, *, edit):
         assert edit

@@ -97,7 +97,7 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
                 'attempts': row.screen_failure_streak, 'last_assessment': row.competition.get('checked_at'),
                 'analysis_error': row.competition.get('analysis_error')} for row in attention[:10]]
             state['stale_sent_assessments'] = sum(row.status == 'telegram_sent' and row.category == 'ai_competition'
-                and not assessment_current(row.competition, PROFILE) for row in rows)
+                and (not assessment_current(row.competition, PROFILE) or bool(row.competition.get('information_gaps'))) for row in rows)
         return state
 
     @api.get("/health")

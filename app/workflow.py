@@ -10,13 +10,13 @@ from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls, CompetitionScreener
-from app.competition_decisions import recommendation_identity, assessment_current
+from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps
 from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
 from app.storage import Repository, card_claimable
-from app.telegram import TelegramClient, TelegramRejected
+from app.telegram import TelegramClient, TelegramRejected, CompetitionCardIncomplete
 from app.threads_client import ThreadsClient, ThreadsUnavailable
 
 
@@ -29,9 +29,7 @@ def card_recommendable(candidate, threshold):
         return False
     if candidate.category != 'ai_competition':
         return candidate.first_round_score >= threshold
-    return candidate.competition.get('decision') == 'eligible' or (
-        candidate.competition.get('decision') == 'pending' and any(
-            fact.get('quote') for fact in candidate.competition.get('facts', {}).values()))
+    return candidate.competition.get('decision') == 'eligible' and not competition_card_gaps(candidate.competition)
 
 
 class Workflow:
@@ -107,9 +105,21 @@ class Workflow:
                 recovered_cards += 1
 
         def recover_empty_assessment(candidate):
+            if candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition':
+                deadline = candidate.competition.get('facts', {}).get('deadline', {}).get('value', 'unknown')
+                try:
+                    closing = datetime.fromisoformat(deadline.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    closing = None
+                if closing and closing.tzinfo and closing <= datetime.now(UTC):
+                    candidate.competition['decision'] = 'rejected'
+                    candidate.competition['blockers'] = ['已截止']
+                    candidate.status = Status.SKIPPED
+                    self.repository.save(candidate)
+                    return candidate
             if (candidate and candidate.status == Status.DISCOVERED and candidate.category == 'ai_competition'
                     and ((candidate.competition.get('decision') == 'pending'
-                          and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values()))
+                          or competition_card_gaps(candidate.competition))
                          or not assessment_current(candidate.competition, PROFILE))):
                 candidate.status = Status.COMPETITION_PENDING_SCREEN
                 requeued_ids.add(candidate.id)
@@ -183,6 +193,8 @@ class Workflow:
                         candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.competition.get("decision") == "rejected":
                     candidate.status = Status.SKIPPED
+                elif candidate.competition.get('decision') == 'pending':
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                     candidate.screen_failure_streak = 0
                 self.repository.save(candidate)
@@ -207,19 +219,45 @@ class Workflow:
             if (delivered.category != 'ai_competition' or not delivered.telegram_message_id
                     or not self.competition_screener
                     or (assessment_current(delivered.competition, PROFILE)
-                        and not delivered.competition.get('update_pending'))):
+                        and not delivered.competition.get('update_pending')
+                        and not delivered.competition.get('information_gaps'))):
                 continue
+            if delivered.competition.get('refresh_incomplete_attempts', 0) >= 3:
+                continue
+            retry_at = delivered.competition.get('refresh_retry_after')
+            if retry_at:
+                try:
+                    if datetime.fromisoformat(retry_at) > datetime.now(UTC):
+                        continue
+                except (ValueError, TypeError):
+                    continue
             # Provider I/O may overlap an owner decision or a newer assessment.
             from copy import deepcopy
             delivered = deepcopy(delivered)
             expected = delivered.to_dict()
             try:
+                if delivered.competition.get('update_pending') and competition_card_gaps(delivered.competition):
+                    delivered.competition['information_gaps'] = competition_card_gaps(delivered.competition)
+                    delivered.competition['refresh_incomplete_attempts'] = delivered.competition.get('refresh_incomplete_attempts', 0) + 1
+                    delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                    self.repository.save_refresh(delivered, expected)
+                    update_errors += 1
+                    break
                 if not delivered.competition.get('update_pending'):
                     if isinstance(self.competition_screener, CompetitionScreener):
                         await self.competition_screener.screen(delivered, model_budget=take_model_slot)
                     else:
                         await self.competition_screener.screen(delivered)
                     screened += bool(delivered.competition.get('sources'))
+                    gaps = competition_card_gaps(delivered.competition)
+                    if gaps:
+                        delivered = Candidate.from_dict(deepcopy(expected))
+                        delivered.competition['information_gaps'] = gaps
+                        delivered.competition['refresh_incomplete_attempts'] = delivered.competition.get('refresh_incomplete_attempts', 0) + 1
+                        delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                        self.repository.save_refresh(delivered, expected)
+                        update_errors += 1
+                        break
                     delivered.competition['update_pending'] = True
                     if not self.repository.save_refresh(delivered, expected):
                         continue
@@ -291,18 +329,6 @@ class Workflow:
         selected_contests = set()
         pending_selected = False
         for candidate in ranked:
-            if candidate.category == "ai_competition":
-                deadline = candidate.competition.get("facts", {}).get("deadline", {}).get("value", "unknown")
-                try:
-                    closing = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
-                except (ValueError, AttributeError):
-                    closing = None
-                if closing and closing.tzinfo and closing <= datetime.now(UTC):
-                    candidate.competition["decision"] = "rejected"
-                    candidate.competition["blockers"] = ["已截止"]
-                    candidate.status = Status.SKIPPED
-                    self.repository.save(candidate)
-                    continue
             if candidate.category == 'ai_competition':
                 identity = recommendation_identity(candidate)
                 if identity in seen_contests:
@@ -348,7 +374,8 @@ class Workflow:
             'card_failed_remaining': sum(item.status == Status.TELEGRAM_FAILED for item in notification_rows),
             'card_uncertain_remaining': sum(item.status == Status.TELEGRAM_UNCERTAIN for item in notification_rows),
             'stale_sent_remaining': sum(item.status == Status.TELEGRAM_SENT and item.category == 'ai_competition'
-                and (not assessment_current(item.competition, PROFILE) or bool(item.competition.get('update_pending')))
+                and (not assessment_current(item.competition, PROFILE) or bool(item.competition.get('update_pending'))
+                     or bool(item.competition.get('information_gaps')))
                 for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,
@@ -403,11 +430,18 @@ class Workflow:
         }
 
     async def _deliver_card(self, candidate_id):
+        queued = self.repository.get(candidate_id)
+        if queued and queued.category == 'ai_competition' and competition_card_gaps(queued.competition):
+            return 'incomplete'
         candidate = self.repository.claim_for_card(candidate_id)
         if not candidate:return 'not_claimed'
         attempt = candidate.card_attempt_id
         try:
             message_id = await self.telegram.send_candidate(candidate)
+        except CompetitionCardIncomplete:
+            self.repository.finish_card(candidate.id, attempt, Status.COMPETITION_PENDING_SCREEN,
+                                        card_last_error='information_incomplete_no_request')
+            return 'incomplete'
         except TelegramRejected as exc:
             retry = exc.retryable and candidate.card_attempts < 3
             self.repository.finish_card(candidate.id, attempt, Status.DISCOVERED if retry else Status.TELEGRAM_FAILED,
@@ -591,14 +625,28 @@ class Workflow:
                 await self.telegram.notify("前次卡片送達結果尚未確認，請先檢查 Telegram，避免重複發送。")
                 return True
             candidate = candidate or Candidate(candidate_id, "organizer", url, url, "", "/competition")
+            from copy import deepcopy
+            candidate = deepcopy(candidate)
+            previous = candidate.to_dict()
             await self.competition_screener.screen(candidate)
             if (candidate.competition.get('decision') == 'rejected'
-                    or any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values())):
+                    or not competition_card_gaps(candidate.competition)):
                 candidate.screen_failure_streak = 0
             if candidate.competition.get("decision") == "rejected":
                 candidate.status = Status.SKIPPED
                 self.repository.save(candidate)
                 await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
+                return True
+            gaps = competition_card_gaps(candidate.competition)
+            if gaps:
+                if previous['status'] == Status.TELEGRAM_SENT:
+                    candidate = Candidate.from_dict(deepcopy(previous))
+                    candidate.competition['information_gaps'] = gaps
+                    self.repository.save_refresh(candidate, previous)
+                else:
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
+                    self.repository.save(candidate)
+                await self.telegram.notify('資料不足，已留待補查：' + '、'.join(gaps))
                 return True
             candidate.status = Status.DISCOVERED
             candidate.card_attempts = 0

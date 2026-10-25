@@ -325,8 +325,7 @@ class CompetitionScreener:
                 candidate.competition['decision'] = 'pending'
                 candidate.competition['rank'] = min(candidate.competition.get('rank', 45), 63)
         candidate.competition['source_hashes'] = hashes
-        if (candidate.competition.get('decision') == 'pending'
-                and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values())):
+        if candidate.competition.get('decision') == 'pending':
             hard_failure = any(row['status'] in {'http_403', 'http_404', 'unsupported', 'redirect_blocked'} for row in candidate.competition['fetch_report'])
             insufficient = bool(sources and not candidate.competition.get('analysis_error'))
             candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=24 if hard_failure or insufficient else 4)).isoformat()

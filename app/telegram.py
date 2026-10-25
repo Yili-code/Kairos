@@ -9,6 +9,14 @@ from typing import Any
 import httpx
 
 from app.models import Candidate
+from app.competition_decisions import competition_card_gaps
+
+
+class CompetitionCardIncomplete(ValueError):
+    """No Telegram request was made; retain the lead for background research."""
+    def __init__(self, gaps):
+        self.gaps = gaps
+        super().__init__('Competition card lacks: ' + '、'.join(gaps))
 
 
 def escaped_clip(text: str, units: int) -> str:
@@ -115,6 +123,19 @@ class TelegramClient:
         return int(result["message_id"])
 
     async def send_competition(self, candidate: Candidate, *, edit=False) -> int:
+        gaps = competition_card_gaps(candidate.competition)
+        if gaps:
+            raise CompetitionCardIncomplete(gaps)
+        payload = self.competition_payload(candidate)
+        if edit:
+            if not candidate.telegram_message_id:
+                raise ValueError('Cannot edit a card without a receipt')
+            payload['message_id'] = candidate.telegram_message_id
+        result = await self.call('editMessageText' if edit else 'sendMessage', payload)
+        return int(result['message_id'])
+
+    def competition_payload(self, candidate: Candidate) -> dict:
+        """Pure layout preview; public delivery always applies the information gate."""
         report = candidate.competition
         facts, estimate = report.get("facts", {}), report.get("estimate", {})
         values = {
@@ -237,12 +258,7 @@ class TelegramClient:
                 {"text": "略過", "callback_data": f"q:{candidate.id}:skip"},
             ]]},
         }
-        if edit:
-            if not candidate.telegram_message_id:
-                raise ValueError('Cannot edit a card without a receipt')
-            payload['message_id'] = candidate.telegram_message_id
-        result = await self.call('editMessageText' if edit else 'sendMessage', payload)
-        return int(result["message_id"])
+        return payload
 
     async def send_question(self, candidate: Candidate, question: str, options: list[tuple[str, str]]) -> None:
         buttons = [
