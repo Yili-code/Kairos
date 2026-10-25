@@ -117,18 +117,14 @@ class TelegramClient:
                 deadline = closing.astimezone(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M") + "（台灣）"
         except ValueError:
             pass
-        if facts.get('deadline', {}).get('defaults'):
-            deadline = facts['deadline']['date'].replace('-', '/') + ' 24:00（預設台灣時間、當日結束）' if '24:00' in facts['deadline']['defaults'] and '台灣時間' in facts['deadline']['defaults'] else deadline + '（預設：' + html.escape(facts['deadline']['defaults']) + '）'
+        deadline_fact = facts.get('deadline', {})
+        if '24:00' in deadline_fact.get('defaults', '') and deadline_fact.get('date'):
+            deadline = html.escape(deadline_fact['date'].replace('-', '/')) + ' 24:00'
         fee = display("registration_amount") if value("registration_fee") == "paid" and value("registration_amount") != "unknown" else display("registration_fee")
         if value("registration_fee") == "paid":
             fee += "（報名前由你決定）"
-        if value("registration_fee") == "unknown":
-            fee += "（實際費用未確認）"
         lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>獎勵與期限</b>",
                  f"獎金：{display('prize')}{evidence_link('prize')}", f"截止：{deadline}{evidence_link('deadline')}", f"報名費：{fee}"]
-        fit = {'eligible': '目前通過條件初篩；獎金與公開得獎紀錄符合目標，投入仍為估算。',
-               'rejected': '有明確條件衝突，建議略過。'}.get(report.get('decision'), '目前只適合查證；關鍵條件尚缺，未確認值得開始製作。')
-        lines.extend(['', '<b>是否值得投入</b>', fit])
         hours, cost, share = estimate.get("total_hours"), estimate.get("extra_tools_twd"), estimate.get("ai_share")
         time_text = f"{hours:g} 小時" if hours is not None else "未知"
         cost_text = f"NT${cost:g}" if cost is not None else "未知"
@@ -138,17 +134,16 @@ class TelegramClient:
             lines.append("AI 估算：尚無可靠的耗時、製作比例與工具費估算")
         else:
             lines.extend([f"AI 估算：{time_text}（非實測）", f"AI 製作 {share_text}｜額外工具 {cost_text}"])
-        lines.append("目標：≤6 小時 · AI ≥50% · 工具 ≤NT$300")
         if estimate.get('component_rule_issues'):
             lines.append('分工含未核實的人工限制，暫不採信這份製作計畫。')
         elif estimate.get('plan'):
-            stages = (('planning', '規劃'), ('generation_wait', '生成等待'), ('review', '審查'),
-                      ('submission', '交件'), ('finals', '後續'))
-            lines.append('流程估算：\n' + ' · '.join(
-                label + (f'{estimate[key]:g}h' if isinstance(estimate.get(key), (int, float)) else '未知')
-                for key, label in stages))
-            if value('attendance') == 'unknown':
-                lines.append('後續出席義務尚未確認，流程估算仍不完整。')
+            stages = []
+            for keys, label in ((('planning', 'generation_wait'), '製作'), (('review', 'submission'), '檢查／交件')):
+                amounts = [estimate.get(key) for key in keys]
+                stages.append(label + (f' {sum(amounts):g}h' if all(isinstance(n, (int, float)) for n in amounts) else '待估'))
+            if isinstance(estimate.get('finals'), (int, float)) and estimate['finals'] > 0:
+                stages.append(f"後續 {estimate['finals']:g}h")
+            lines.append('流程估算：' + ' · '.join(stages))
         # Detailed component weights stay in the assessment; keep mobile cards scannable.
 
         labels = {
@@ -157,10 +152,10 @@ class TelegramClient:
             "rights": "作品授權", "participation": "參賽人數／名額",
         }
         known = [key for key in labels if value(key) != "unknown"]
-        unknown = [labels[key] for key in labels if value(key) == "unknown"]
-        lines.extend(["", "<b>交件與規則</b>"])
+        if known:
+            lines.extend(["", "<b>交件與規則</b>"])
         for key in known:
-            detail = display(key)
+            detail = display(key, 110 if key == 'deliverables' else 100)
             if key == 'eligibility' and value(key) in {'eligible', 'ineligible'}:
                 rule = facts.get(key, {}).get('quote')
                 if rule:
@@ -170,13 +165,8 @@ class TelegramClient:
                     start = re.search(r'參賽資格[：:\s]*|不限年齡|(?:eligibility|eligible entrants|open to)\b', rule, re.I)
                     if start:
                         rule = rule[start.start():]
-                detail += '｜' + escaped_clip(rule, 240) if rule else '｜資格規則原文待補'
+                detail += '｜' + escaped_clip(rule, 120) if rule else '｜資格規則原文待補'
             lines.append(f"{labels[key]}：{detail}" + (evidence_link(key) if key == "eligibility" else ""))
-        if unknown:
-            lines.append("待補：" + "、".join(unknown))
-        ai_quote = facts.get("ai_policy", {}).get("quote")
-        if value("ai_policy") != "unknown" and ai_quote:
-            lines.append(f"<i>AI 規則摘錄：{escaped_clip(ai_quote, 140)}</i>")
         conditions = []
         for part in estimate.get('production_components', []):
             if part.get('human_only') and part.get('rule_quote') and part.get('rule_url') in report.get('sources', []):
@@ -191,13 +181,11 @@ class TelegramClient:
             lines.extend(['', '<b>不可漏掉的條件</b>'])
             for label, quote, url in conditions[:4]:
                 lines.append(f'{label}：{escaped_clip(quote, 440)} <a href="{html.escape(url, quote=True)}">依據</a>')
-            if len(conditions) > 4:
-                lines.append(f'另有 {len(conditions) - 4} 項原文限制，請核對完整來源。')
         if report.get("blockers"):
-            heading = "不符合的原因" if report.get("decision") == "rejected" else "決策前先確認"
-            lines.append(f"\n<b>{heading}</b>\n" + "\n".join("• " + escaped_clip(item, 90) for item in report["blockers"][:4]))
-            if len(report["blockers"]) > 4:
-                lines.append(f"另有 {len(report['blockers']) - 4} 項限制待核對，請查看來源。")
+            rejected = report.get('decision') == 'rejected'
+            heading = '不符合的原因' if rejected else '待確認'
+            issues = list(dict.fromkeys(report['blockers']))[:3 if rejected else 2]
+            lines.append(f'\n<b>{heading}</b>\n' + '；'.join(escaped_clip(item.rstrip('。.'), 80) for item in issues))
         sources = sorted(report.get("sources", []), key=lambda url: (
             0 if '.pdf' in url.lower() else 1 if '/terms' in url.lower() else 2))
         if sources:
@@ -206,7 +194,6 @@ class TelegramClient:
             ))
         else:
             lines.append("\n尚無可核對的規則來源，不能判定符合條件。")
-        lines.append("\n<i>耗時含等待、修改、交件與答辯。工具優先使用現有 ChatGPT 額度；報名費另計。估算不代表得獎機率。</i>")
         payload = {
             "chat_id": self.owner_chat_id, "text": "\n".join(lines), "parse_mode": "HTML",
             "disable_web_page_preview": True,
