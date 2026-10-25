@@ -298,7 +298,14 @@ class Workflow:
         remaining = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
         from app.storage import screen_claimable
+        notification_rows = self.repository.find_by_status(
+            [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN, Status.TELEGRAM_FAILED, Status.DISCOVERED], limit=500)
         return {
+            'card_failed_remaining': sum(item.status == Status.TELEGRAM_FAILED for item in notification_rows),
+            'card_uncertain_remaining': sum(item.status == Status.TELEGRAM_UNCERTAIN for item in notification_rows),
+            'stale_sent_remaining': sum(item.status == Status.TELEGRAM_SENT and item.category == 'ai_competition'
+                and (not assessment_current(item.competition, PROFILE) or bool(item.competition.get('update_pending')))
+                for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,
             'screen_queue_before': backlog_before,
