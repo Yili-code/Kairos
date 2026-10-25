@@ -112,3 +112,27 @@ def test_screen_metrics_distinguish_retry_from_completed_assessment():
     assert result['screen_leads_created'] == result['screen_queue_after'] == 0
     assert repo.get('old-retry').screen_attempts == 1
 
+
+def test_repeated_origin_denials_leave_capacity_for_another_source():
+    workflow, repo, _, _ = make_workflow()
+    calls = []
+    for i in range(12):
+        repo.save(Candidate('bad'+str(i), 'x', 'AI competition', 'https://blocked.test/'+str(i), '',
+            'announcement:test', category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN))
+    repo.save(Candidate('good', 'x', 'AI competition', 'https://readable.test/event', '',
+        'announcement:test', category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN))
+    class Screener:
+        hosts = ('blocked.test', 'readable.test')
+        async def screen(self, candidate):
+            calls.append(candidate.permalink)
+            if 'blocked.test' in candidate.permalink:
+                candidate.competition = {'decision': 'pending', 'sources': [], 'facts': {},
+                    'fetch_report': [{'status': 'http_403', 'url': candidate.permalink}]}
+            else:
+                candidate.competition = evaluate(valid_report(), SOURCES)
+    workflow.competition_screener = Screener()
+    result = run_immediate(workflow.discover(()))
+    assert len(calls) == 3 and calls[-1] == 'https://readable.test/event'
+    assert result['screen_origin_deferred'] == 10
+    assert result['screen_completed'] == 1 and result['competition_source_errors'] == 2
+

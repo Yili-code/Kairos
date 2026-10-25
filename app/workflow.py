@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls, CompetitionScreener
@@ -66,6 +67,8 @@ class Workflow:
         competition_attempts = 0
         screen_retries = screen_completed = screen_leads_created = 0
         requeued_ids = set()
+        origin_denials = {}
+        origin_deferred_ids = set()
         completed_pending = 0
         announcement_errors = 0
         announcements_discovered = 0
@@ -134,6 +137,10 @@ class Workflow:
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
                     return
+                origin = urlsplit(urls[0] if urls else candidate.permalink).netloc.lower()
+                if origin_denials.get(origin, 0) >= 2:
+                    origin_deferred_ids.add(candidate.id)
+                    return
                 candidate = self.repository.claim_for_screen(candidate.id)
                 if not candidate:
                     return
@@ -144,6 +151,10 @@ class Workflow:
                     await self.competition_screener.screen(candidate, model_budget=take_model_slot)
                 else:
                     await self.competition_screener.screen(candidate)
+                for receipt in candidate.competition.get('fetch_report', []):
+                    if receipt.get('status') in {'http_403', 'http_429'}:
+                        denied = urlsplit(receipt.get('url', '')).netloc.lower()
+                        origin_denials[denied] = origin_denials.get(denied, 0) + 1
                 model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
                 rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
                 if candidate.competition.get("sources"):
@@ -330,6 +341,7 @@ class Workflow:
             'screen_retry_attempts': screen_retries,
             'screen_completed': screen_completed,
             'screen_completed_pending': completed_pending,
+            'screen_origin_deferred': len(origin_deferred_ids),
             'screen_leads_created': screen_leads_created,
             'screen_requeued': len(requeued_ids),
             'screen_queue_cooling': len(remaining) - len(due_rows),
