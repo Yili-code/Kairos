@@ -16,10 +16,12 @@ def test_screenshot_regression_is_compact_for_new_cards_and_updates(edit):
         'decision': 'pending', 'sources': [url],
         'facts': {
             'prize': {'value': '$20,000 in prizes', 'quote': '$20,000 in prizes', 'url': url},
+            'prize_kind': {'value': 'cash', 'quote': 'Cash prizes', 'url': url},
             'deadline': {'value': '2026-12-16T00:00:00+08:00', 'date': '2026-12-15',
                          'defaults': '台灣時間、24:00', 'quote': 'December 15, 2026', 'url': url},
             'registration_fee': {'value': 'unknown'},
-            'deliverables': {'value': '2–20 minute film with official watermark created in Showrunner Studio'},
+            'deliverables': {'value': '2–20 minute film with official watermark created in Showrunner Studio',
+                             'quote': '2–20 minute film', 'url': url},
             'submission': {'value': 'online'},
             'ai_policy': {'value': 'broad_allowed', 'quote': 'RULES OF ENTRY 01 — Films must be created in Showrunner Studio 02 — Runtime: 2 to 20 minutes', 'url': url},
         },

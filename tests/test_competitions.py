@@ -344,7 +344,7 @@ def test_contest_forged_callbacks_and_direct_send_cannot_contact_anyone():
     assert candidate.approval_hash == ""
 
 
-def test_pending_cards_are_capped_and_remaining_cards_survive_next_scan():
+def test_pending_cards_remain_background_work_instead_of_owner_notifications():
     workflow, repo, telegram, _ = make_workflow()
     workflow.max_cards = 3
     for i in range(3):
@@ -354,8 +354,9 @@ def test_pending_cards_are_capped_and_remaining_cards_survive_next_scan():
         repo.save(candidate)
     first = run_immediate(workflow.discover(()))
     second = run_immediate(workflow.discover(()))
-    assert first["cards_sent"] == second["cards_sent"] == 1
-    assert len(set(telegram.cards)) == 2
+    assert first['cards_sent'] == second['cards_sent'] == 0
+    assert telegram.cards == []
+    assert len(repo.items) == 3
 
 
 def test_model_unavailable_preserves_pending_not_eligible():
@@ -523,7 +524,7 @@ def test_long_unicode_rules_card_stays_within_telegram_utf16_limit():
     report["blockers"] = ["😀<&>" * 100] * 20
     candidate.competition = report
     client = Capture("not-a-token", 42)
-    run_immediate(client.send_candidate(candidate))
+    client.payload = client.competition_payload(candidate)
     visible = html.unescape(re.sub(r"<[^>]+>", "", client.payload["text"]))
     assert len(visible.encode("utf-16-le")) // 2 < 4096
 
@@ -543,8 +544,7 @@ def capture_card(report, text="AI 影片徵件\nhttps://sample.devpost.com/rules
 
     candidate = Candidate("c", "x", text, URL, "", "contest", category="ai_competition", competition=report)
     client = Capture("not-a-token", 42)
-    run_immediate(client.send_candidate(candidate))
-    return client.payload["text"]
+    return client.competition_payload(candidate)["text"]
 
 
 def test_card_leads_with_title_and_decision_then_reward_and_cost():

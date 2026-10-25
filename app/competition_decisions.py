@@ -4,6 +4,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import math
 from datetime import datetime, timedelta, timezone
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -16,6 +17,39 @@ TAIPEI = timezone(timedelta(hours=8))
 MONTHS = {name.lower(): number for number in range(1,13)
           for name in (calendar.month_name[number], calendar.month_abbr[number])}
 CLOSING = re.compile(r'截止|期限|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
+
+
+def competition_card_gaps(report, *, now=None):
+    """Minimum useful card content; quotation provenance was validated by evaluation."""
+    facts, sources = report.get('facts', {}), report.get('sources', [])
+    missing = []
+    def grounded(key):
+        fact = facts.get(key, {})
+        return bool(isinstance(fact.get('value'), str) and fact['value'] not in {'', 'unknown'} and fact.get('quote')
+                    and fact.get('url') in sources)
+    if not grounded('prize') or not grounded('prize_kind') or facts['prize_kind']['value'] != 'cash':
+        missing.append('現金獎金')
+    try:
+        closing = datetime.fromisoformat(facts.get('deadline', {}).get('value', '').replace('Z', '+00:00'))
+        valid_deadline = grounded('deadline') and closing.tzinfo and closing > (now or datetime.now(timezone.utc))
+    except (TypeError, ValueError, AttributeError):
+        valid_deadline = False
+    if not valid_deadline:
+        missing.append('有效截止時間')
+    for key, label in (('deliverables', '交付內容'), ('ai_policy', 'AI 規則')):
+        if not grounded(key):
+            missing.append(label)
+    estimate = report.get('estimate', {})
+    valid_estimate = True
+    for key in ('total_hours', 'ai_share', 'extra_tools_twd'):
+        value = estimate.get(key)
+        valid_estimate &= (not isinstance(value, bool) and isinstance(value, (int, float))
+                           and math.isfinite(value) and value >= 0
+                           and (key != 'total_hours' or value > 0)
+                           and (key != 'ai_share' or value <= 1))
+    if not valid_estimate:
+        missing.append('完整投入估算')
+    return missing
 
 
 def evaluation_context(profile):

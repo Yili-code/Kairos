@@ -11,3 +11,11 @@ New cards, explicit owner resends, and in-place updates use the same renderer in
 - Keep the pending status to one phrase (`待確認`). Display recommendation separately: high for eligible, free, no-attendance entries within the assessed effort/tool limits; medium for other fully assessed eligible entries; low when current estimates exceed the six-hour/tool-cost limit or fall below the AI-production threshold; ungraded when key facts/estimates remain unresolved; not recommended for rejected entries. These preference tiers are not award probabilities and never change qualification or delivery policy.
 
 `tests/test_competition_card_concision.py` captures the reported mobile-card regression for both send and edit paths, checks that all removed boilerplate remains absent, enforces a compact sample, and verifies that rendering does not mutate the assessment.
+
+## Information gate
+
+An already-delivered record is historical evidence, not a recommendation or permission to resend it. Before any real competition card send or edit, require sourced cash-prize information, a sourced future deadline, sourced deliverables and AI rules, and usable total-hours/AI-share/tool-cost estimates. Missing data stays in background screening; `/competition` returns a short missing-information status instead of an empty opportunity card. Manual resends use the same final Telegram gate. `competition_payload` is a pure layout preview and must not be used to bypass delivery validation.
+
+Automatic competition notifications additionally require `decision=eligible`. A pending card with useful information can only be sent on an explicit owner request. All pending assessments stay in bounded screening recovery with cooldowns; failed or interrupted automatic claims consume the existing three-attempt budget.
+
+A failed refresh retains the previous assessment and message receipt. It cannot replace the useful card with missing fields, counts as unresolved, waits four hours before another attempt, and pauses after three incomplete attempts. Explicitly queued incomplete edits obey the same bounded deferral. The old assessment is not falsely marked freshly verified. Owner decisions and newer versions remain protected by the existing transactional guard.
