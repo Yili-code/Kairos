@@ -19,6 +19,17 @@ def test_partial_failure_is_not_full_success_and_repeated_alert_is_bounded():
     asyncio.run(scenario())
 
 
+def test_paused_screening_is_not_reported_as_full_success():
+    async def scenario():
+        store = MemoryScanStore()
+        runner = ScanRunner(store, FakeTelegram())
+        async def work():
+            return {'screen_queue_due': 0, 'screen_attention_remaining': 1}
+        assert (await runner.run(work))['scan_status'] == 'partial'
+        assert 'last_full_success' not in store.control
+    asyncio.run(scenario())
+
+
 def test_shared_lease_suppresses_overlapping_runs_and_recovers_abandoned_owner():
     async def scenario():
         store = MemoryScanStore();runner = ScanRunner(store, FakeTelegram())

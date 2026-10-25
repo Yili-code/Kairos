@@ -18,6 +18,8 @@ def card_claimable(candidate):
 
 
 def screen_claimable(candidate: Candidate) -> bool:
+    if candidate.screen_failure_streak >= 3:
+        return False
     if candidate.status == "competition_pending_screen":
         retry_after = candidate.competition.get('retry_after')
         if retry_after:
@@ -117,6 +119,7 @@ class InMemoryRepository:
             return None
         candidate.status = "competition_screening"
         candidate.screen_attempts += 1
+        candidate.screen_failure_streak += 1
         self.save(candidate)
         return candidate
 
@@ -228,8 +231,10 @@ class FirestoreRepository:
                 return None
             candidate.status = "competition_screening"
             candidate.screen_attempts += 1
+            candidate.screen_failure_streak += 1
             candidate.updated_at = datetime.now(UTC).isoformat()
-            transaction.update(reference, {"status": candidate.status, "updated_at": candidate.updated_at, "screen_attempts": candidate.screen_attempts})
+            transaction.update(reference, {"status": candidate.status, "updated_at": candidate.updated_at,
+                "screen_attempts": candidate.screen_attempts, "screen_failure_streak": candidate.screen_failure_streak})
             return candidate
 
         return claim(self.client.transaction())

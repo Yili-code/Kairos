@@ -52,6 +52,7 @@ class Candidate:
     telegram_message_id: int | None = None
     card_attempt_id: str = ""
     screen_attempts: int = 0
+    screen_failure_streak: int = 0
     card_attempts: int = 0
     card_retry_after: str = ""
     card_last_error: str = ""
