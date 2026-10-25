@@ -137,7 +137,7 @@ class Settings:
             threads_api_base=os.getenv("THREADS_API_BASE", "https://graph.threads.net/v1.0").rstrip("/"),
             threads_search_terms=terms,
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
             gemini_fallback_model=os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite"),
             google_cloud_project=os.getenv("GOOGLE_CLOUD_PROJECT", "").strip(),
             firestore_database=os.getenv("FIRESTORE_DATABASE", "thread-opportunity").strip(),

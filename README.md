@@ -134,7 +134,7 @@ The helper scripts keep credentials out of command output:
 - Free-text answers use Telegram Force Reply markers bound to one candidate. If multiple opportunities are waiting, an unthreaded reply is rejected instead of being attached to the newest candidate.
 - Hackathons ask for a preferred role, internships ask for the compensation condition, and paid projects ask for the preferred engagement structure.
 - Gemini treats post text as untrusted data and uses a validated structured-output contract.
-- Temporary Gemini 429/5xx failures receive one silent retry. Persistent primary-model overload falls back to `gemini-3.5-flash-lite`; persistent failure preserves the answers and shows a manual retry button.
+- Gemini defaults to `gemini-3.5-flash-lite` as the primary model. Temporary 429/5xx failures receive one silent retry. A distinct configured fallback is attempted on persistent transient failure; identical primary/fallback names are deduplicated. Persistent failure preserves the answers and shows a manual retry button.
 - Draft-generation retry cannot approve or send a message. The exact-draft approval hash remains mandatory.
 
 ## Approval invariant
