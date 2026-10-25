@@ -160,3 +160,20 @@ def test_notification_deduplication_reads_beyond_first_hundred_receipts():
     result = run_immediate(workflow.discover(()))
     assert result['cards_sent'] == 0 and telegram.cards == []
     assert result['duplicate_competition_cards_suppressed'] == 1
+
+
+def test_delivery_cap_does_not_hide_an_outstanding_notification_as_success():
+    workflow, repo, _, _ = make_workflow()
+    workflow.max_cards = 1
+    for i in range(2):
+        repo.save(Candidate('queued'+str(i), 'x', 'card', 'https://example.test/'+str(i), '',
+                            'test', first_round_score=90))
+    async def run():
+        runner = ScanRunner(MemoryScanStore(), FakeTelegram())
+        first = await runner.run(lambda: workflow.discover(()))
+        assert first['cards_sent'] == first['card_queue_due'] == 1
+        assert first['scan_status'] == 'partial'
+        second = await runner.run(lambda: workflow.discover(()))
+        assert second['cards_sent'] == 1 and second['card_queue_due'] == 0
+        assert second['scan_status'] == 'succeeded'
+    asyncio.run(run())

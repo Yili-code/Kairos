@@ -24,6 +24,16 @@ def message_hash(message: str) -> str:
     return hashlib.sha256(message.encode("utf-8")).hexdigest()
 
 
+def card_recommendable(candidate, threshold):
+    if not card_claimable(candidate):
+        return False
+    if candidate.category != 'ai_competition':
+        return candidate.first_round_score >= threshold
+    return candidate.competition.get('decision') == 'eligible' or (
+        candidate.competition.get('decision') == 'pending' and any(
+            fact.get('quote') for fact in candidate.competition.get('facts', {}).values()))
+
+
 class Workflow:
     def __init__(
         self,
@@ -262,13 +272,7 @@ class Workflow:
         queued = {candidate.id: candidate for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=100)}
         queued.update(created)
         ranked = sorted(
-            (candidate for candidate in queued.values() if card_claimable(candidate) and (
-                candidate.first_round_score >= self.shortlist_threshold
-                if candidate.category != "ai_competition"
-                else candidate.competition.get("decision") == "eligible"
-                or (candidate.competition.get("decision") == "pending" and any(
-                    fact.get("quote") for fact in candidate.competition.get("facts", {}).values()))
-            )),
+            (candidate for candidate in queued.values() if card_recommendable(candidate, self.shortlist_threshold)),
             key=lambda candidate: candidate.first_round_score,
             reverse=True,
         )
@@ -330,6 +334,8 @@ class Workflow:
         notification_rows = self.repository.find_by_status(
             [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN, Status.TELEGRAM_FAILED, Status.DISCOVERED], limit=500)
         return {
+            'card_queue_due': sum(card_recommendable(item, self.shortlist_threshold) for item in notification_rows),
+            'notification_queue_sample_saturated': int(len(notification_rows) >= 500),
             'card_failed_remaining': sum(item.status == Status.TELEGRAM_FAILED for item in notification_rows),
             'card_uncertain_remaining': sum(item.status == Status.TELEGRAM_UNCERTAIN for item in notification_rows),
             'stale_sent_remaining': sum(item.status == Status.TELEGRAM_SENT and item.category == 'ai_competition'

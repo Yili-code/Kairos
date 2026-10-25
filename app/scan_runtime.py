@@ -16,7 +16,8 @@ ISSUES = ('search_errors', 'competition_errors', 'competition_source_errors', 'c
           'search_terms_deferred', 'candidate_errors', 'competition_rule_fetch_errors', 'card_uncertain_recovered',
           'model_rate_limited', 'search_halted', 'announcement_deferred_pages',
           'screen_queue_due', 'screen_queue_sample_saturated', 'card_update_errors',
-          'card_failed_remaining', 'card_uncertain_remaining', 'stale_sent_remaining')
+          'card_failed_remaining', 'card_uncertain_remaining', 'stale_sent_remaining',
+          'card_queue_due', 'notification_queue_sample_saturated')
 
 
 def finish_state(control, run_id, outcome, counts, error_type, now):
