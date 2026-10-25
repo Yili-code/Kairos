@@ -323,9 +323,9 @@ def test_card_is_escaped_and_has_no_outreach_or_submission_button():
     assert run_immediate(client.send_candidate(candidate)) == 9
     text = client.payload["text"]
     assert "&lt;b&gt;unsafe&lt;/b&gt;" in text
-    assert "非實測" in text and "報名費另計" in text
+    assert "非實測" in text and "報名費另計" not in text
     assert "AI 製作 95%" in text and "AI 製作 90%" not in text
-    assert "目標：≤6 小時 · AI ≥50% · 工具 ≤NT$300" in text
+    assert "目標：≤6 小時 · AI ≥50% · 工具 ≤NT$300" not in text
     assert len(text.encode("utf-16-le")) // 2 < 4096
     buttons = json.dumps(client.payload["reply_markup"])
     assert "approve" not in buttons and "start" not in buttons
@@ -560,9 +560,11 @@ def test_unknown_fields_are_grouped_and_blockers_do_not_flood_the_card():
     report = evaluate({}, {}, now=NOW)
     text = capture_card(report, "https://sample.devpost.com/rules")
     assert text.startswith("<b>競賽資訊（名稱待確認）</b>\n待確認")
-    assert "待補：交付、交件方式、AI 使用" in text
-    assert text.count("• ") == 4
-    assert f"另有 {len(report['blockers']) - 4} 項限制" in text
+    assert "待補：" not in text
+    assert '<b>待確認</b>' in text
+    assert '另有 ' not in text
+    assert report['blockers'][0].rstrip('。.') in text
+    assert report['blockers'][2].rstrip('。.') not in text
     assert "尚無可靠的耗時" in text
 
 
