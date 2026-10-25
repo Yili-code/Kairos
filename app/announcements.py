@@ -23,12 +23,19 @@ CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品
 SPORT_TITLE = re.compile(r"籃球|排球|羽球|桌球|棒球|足球|游泳|田徑|馬拉松|basketball|volleyball|marathon", re.I)
 NON_ENTRY_TITLE = re.compile(r"(?:期刊|學刊|季刊|學報|論叢|論衡|評論|專刊|叢刊|學誌|研究[》」]).*徵稿|學術期刊|合唱比賽|call for papers|journal submissions", re.I)
 RECAP_TITLE = re.compile(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|圓滿落幕|評審肯定|成果報導|winners? announced|award winners|award-winning|獲.{0,35}(?:挑戰賽|競賽|比賽).{0,8}獎|\d+位.{0,12}高手集結", re.I)
+HONOR_RECAP_TITLE = re.compile(r"(?:本系|本校|學生|校友|團隊).{0,30}榮獲.{0,80}佳績", re.I)
+OPEN_CALL_TITLE = re.compile(r"徵件|徵選|報名|募集|截止|open call|call for entr|entries open", re.I)
 MAX_BOARDS = 24
 MAX_LISTING_PAGES = 2
 DISCOVERY_TIMEOUT = 60.0
 # Directory copy is a lead only; send organizer/platform links to the rules screener.
 DIRECTORY_HOSTS = {"aifilmcontests.com"}
 LOGGER = logging.getLogger(__name__)
+
+
+def honor_recap(title: str) -> bool:
+    """A completed student award announcement, without a concurrent entry invitation."""
+    return bool(HONOR_RECAP_TITLE.search(title) and not OPEN_CALL_TITLE.search(title))
 
 
 class AnnouncementLinks(HTMLParser):
@@ -122,7 +129,7 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, o
         if SPORT_TITLE.search(title) or (NON_ENTRY_TITLE.search(title) and not re.search(r'競賽|獎金|文學獎', title)):
             counts['not_entry_call'] += 1
             continue
-        if RECAP_TITLE.search(title):
+        if RECAP_TITLE.search(title) or honor_recap(title):
             counts['recap'] += 1
             continue
         try:

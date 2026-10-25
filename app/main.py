@@ -90,6 +90,12 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
                 'discovered', 'telegram_sending', 'telegram_uncertain', 'telegram_failed', 'telegram_sent'], limit=500)
             state['queue'] = dict(Counter(row.status for row in rows))
             state['queue_sample_limit'] = 500
+            attention = [row for row in rows if row.status in {'competition_pending_screen', 'competition_screening'}
+                         and row.screen_failure_streak >= 3]
+            state['screen_attention_remaining'] = len(attention)
+            state['screen_attention'] = [{'id': row.id, 'url': row.permalink,
+                'attempts': row.screen_failure_streak, 'last_assessment': row.competition.get('checked_at'),
+                'analysis_error': row.competition.get('analysis_error')} for row in attention[:10]]
             state['stale_sent_assessments'] = sum(row.status == 'telegram_sent' and row.category == 'ai_competition'
                 and not assessment_current(row.competition, PROFILE) for row in rows)
         return state

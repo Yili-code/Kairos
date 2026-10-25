@@ -386,6 +386,25 @@ def test_recaps_and_periodicals_do_not_hide_open_calls_with_award_language():
     assert details['excluded']['not_entry_call'] == 1
 
 
+def test_student_award_recaps_from_live_backlog_are_not_entry_calls():
+    from app.announcements import honor_recap
+    titles = ['【校外競賽】本系學生校友榮獲「2026第六屆華瑑盃」佳績！',
+              '【校外競賽】本系學生校友榮獲「2026 南瀛獎」佳績',
+              '【校外競賽】本系學生校友榮獲「2026第一屆靜心盃硬筆書法比賽」佳績！']
+    for title in titles:
+        assert honor_recap(title)
+        details = {}
+        assert entries(f'<a href="/news">{title}</a>', 'https://school.edu.tw/', ('edu.tw',), diagnostics=details) == []
+        assert details['excluded']['recap'] == 1
+
+
+def test_honor_recap_with_a_new_entry_invitation_remains_a_lead():
+    from app.announcements import honor_recap
+    title = '本校學生榮獲競賽佳績，今年競賽報名開放'
+    assert not honor_recap(title)
+    assert len(entries(f'<a href="/news">{title}</a>', 'https://school.edu.tw/', ('edu.tw',))) == 1
+
+
 def test_long_image_credit_never_wins_over_the_event_name():
     body = '<a href="/prize"><img alt="Image source: International Competition Association 3 weeks left"></a><a href="/prize">Design Award 2026</a>'
     rows = entries(body,BASE,HOSTS)

@@ -29,6 +29,7 @@ def queue_summary(rows, *, now=None):
     untouched = [row for row in pending if not row.get('screen_attempts')
                  and not row.get('competition', {}).get('fetch_report')]
     due = [row for row in pending if screen_claimable(Candidate.from_dict(row))]
+    attention = [row for row in pending if row.get('screen_failure_streak', 0) >= 3]
     def age(row, field):
         try:
             value = datetime.fromisoformat(row.get(field, ''))
@@ -40,7 +41,10 @@ def queue_summary(rows, *, now=None):
         'sample_limit': SAMPLE_LIMIT,
         'sample_saturated': len(rows) > SAMPLE_LIMIT,
         'statuses': dict(Counter(row.get('status') for row in rows)),
-        'pending': len(pending), 'due': len(due), 'cooling_or_leased': len(pending) - len(due),
+        'pending': len(pending), 'due': len(due),
+        'cooling_or_leased': len(pending) - len(due) - len(attention),
+        'screen_attention_remaining': len(attention),
+        'screen_attention_ids': [row['id'] for row in attention],
         'unattempted': len(untouched),
         'oldest_due_age_seconds': max((age(row, 'updated_at') or 0 for row in due), default=0),
         'oldest_unattempted_age_seconds': max((age(row, 'created_at') or 0 for row in untouched), default=0),

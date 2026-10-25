@@ -183,6 +183,8 @@ class Workflow:
                         candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.competition.get("decision") == "rejected":
                     candidate.status = Status.SKIPPED
+                if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
+                    candidate.screen_failure_streak = 0
                 self.repository.save(candidate)
                 completed = candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
                 screen_completed += int(completed)
@@ -207,6 +209,10 @@ class Workflow:
                     or (assessment_current(delivered.competition, PROFILE)
                         and not delivered.competition.get('update_pending'))):
                 continue
+            # Provider I/O may overlap an owner decision or a newer assessment.
+            from copy import deepcopy
+            delivered = deepcopy(delivered)
+            expected = delivered.to_dict()
             try:
                 if not delivered.competition.get('update_pending'):
                     if isinstance(self.competition_screener, CompetitionScreener):
@@ -215,11 +221,13 @@ class Workflow:
                         await self.competition_screener.screen(delivered)
                     screened += bool(delivered.competition.get('sources'))
                     delivered.competition['update_pending'] = True
-                    self.repository.save(delivered)
+                    if not self.repository.save_refresh(delivered, expected):
+                        continue
+                    expected = delivered.to_dict()
                 # Repeating an edit of the same message is safe after a lost acknowledgement.
                 await self.telegram.send_competition(delivered, edit=True)
                 delivered.competition['update_pending'] = False
-                self.repository.save(delivered)
+                self.repository.save_refresh(delivered, expected)
                 updates_sent += 1
             except Exception:
                 update_errors += 1
@@ -324,6 +332,7 @@ class Workflow:
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
         from app.storage import screen_claimable
         due_rows = [item for item in remaining if screen_claimable(item)]
+        attention = sum(item.screen_failure_streak >= 3 for item in remaining)
         now = datetime.now(UTC)
         def age_seconds(item):
             try:
@@ -350,7 +359,8 @@ class Workflow:
             'screen_origin_deferred': len(origin_deferred_ids),
             'screen_leads_created': screen_leads_created,
             'screen_requeued': len(requeued_ids),
-            'screen_queue_cooling': len(remaining) - len(due_rows),
+            'screen_attention_remaining': attention,
+            'screen_queue_cooling': len(remaining) - len(due_rows) - attention,
             'screen_queue_unattempted': sum(not item.screen_attempts and not item.competition.get('fetch_report') for item in remaining),
             'screen_oldest_due_age_seconds': max((age_seconds(item) for item in due_rows), default=0),
             'screen_queue_before': backlog_before,
@@ -582,6 +592,9 @@ class Workflow:
                 return True
             candidate = candidate or Candidate(candidate_id, "organizer", url, url, "", "/competition")
             await self.competition_screener.screen(candidate)
+            if (candidate.competition.get('decision') == 'rejected'
+                    or any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values())):
+                candidate.screen_failure_streak = 0
             if candidate.competition.get("decision") == "rejected":
                 candidate.status = Status.SKIPPED
                 self.repository.save(candidate)
