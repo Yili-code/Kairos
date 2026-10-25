@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,6 +15,39 @@ def escaped_clip(text: str, units: int) -> str:
     """Telegram counts UTF-16 units; escaping must happen after clipping."""
     clipped = text.encode("utf-16-le")[:units * 2].decode("utf-16-le", errors="ignore")
     return html.escape(clipped)
+
+
+def competition_recommendation(report: dict) -> str:
+    """Preference tier, separate from qualification and never an award probability."""
+    decision = report.get('decision')
+    if decision == 'rejected':
+        return '不推薦'
+    estimate = report.get('estimate', {})
+
+    def number(key, *, upper=None, positive=False):
+        value = estimate.get(key)
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                or value < 0 or (positive and value == 0) or (upper is not None and value > upper)):
+            return None
+        return value
+
+    hours = number('total_hours', positive=True)
+    share = number('ai_share', upper=1)
+    cost = number('extra_tools_twd')
+    if hours is not None and hours > 6:
+        return '低｜目前工時估算偏高'
+    if share is not None and share < .5:
+        return '低｜預估 AI 製作比例偏低'
+    if cost is not None and cost > 300:
+        return '低｜預估工具費偏高'
+    facts = report.get('facts', {})
+    fee = facts.get('registration_fee', {}).get('value')
+    attendance = facts.get('attendance', {}).get('value')
+    if (decision != 'eligible' or estimate.get('uncertain') is not False
+            or any(value is None for value in (hours, share, cost))
+            or fee not in {'free', 'paid'} or attendance not in {'none', 'online_final'}):
+        return '暫不評級'
+    return '高' if fee == 'free' and attendance == 'none' else '中'
 
 
 class TelegramRejected(RuntimeError):
@@ -109,7 +143,7 @@ class TelegramClient:
         status = {
             "eligible": "初篩符合｜報名前核對完整規則",
             "rejected": "不符合條件｜建議略過",
-        }.get(report.get("decision"), "待確認｜尚未確認適合投入")
+        }.get(report.get("decision"), "待確認")
         deadline = display("deadline")
         try:
             closing = datetime.fromisoformat(value("deadline").replace("Z", "+00:00"))
@@ -123,7 +157,8 @@ class TelegramClient:
         fee = display("registration_amount") if value("registration_fee") == "paid" and value("registration_amount") != "unknown" else display("registration_fee")
         if value("registration_fee") == "paid":
             fee += "（報名前由你決定）"
-        lines = [f"<b>{escaped_clip(title, 180)}</b>", status, "", "<b>獎勵與期限</b>",
+        lines = [f"<b>{escaped_clip(title, 180)}</b>", status,
+                 f"推薦程度：{competition_recommendation(report)}", "", "<b>獎勵與期限</b>",
                  f"獎金：{display('prize')}{evidence_link('prize')}", f"截止：{deadline}{evidence_link('deadline')}", f"報名費：{fee}"]
         hours, cost, share = estimate.get("total_hours"), estimate.get("extra_tools_twd"), estimate.get("ai_share")
         time_text = f"{hours:g} 小時" if hours is not None else "未知"
