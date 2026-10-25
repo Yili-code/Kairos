@@ -79,3 +79,18 @@ def test_listing_cap_rotates_instead_of_permanently_losing_tail_leads():
     second = entries(body, 'https://example.test/', ('example.test',), offset=20)
     assert len(first) == len(second) == 20
     assert len({item.id for item in first + second}) == 26
+
+
+def test_unexpected_board_failure_does_not_discard_other_boards():
+    from app.announcements import AnnouncementSource
+    from app.public_fetch import PublicPage
+    async def fetch(client, url, allowed):
+        if '/broken' in url:
+            raise RuntimeError('Injected independent source failure')
+        return PublicPage(url, 'ok', body=b'<a href="https://example.test/event">AI competition</a>',
+                          content_type='text/html')
+    source = AnnouncementSource(('https://example.test/broken', 'https://example.test/good'),
+                                ('example.test',), fetcher=fetch)
+    rows, errors = asyncio.run(source.discover())
+    assert len(rows) == 1 and errors == 1
+    assert {row['status'] for row in source.last_report} == {'source_exception', 'ok'}
