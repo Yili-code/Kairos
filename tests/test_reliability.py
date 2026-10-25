@@ -70,3 +70,12 @@ def test_repeated_identical_edit_is_accepted_without_send():
     client = TelegramClient('test', 0, transport=httpx.MockTransport(handler))
     result = asyncio.run(client.call('editMessageText', {'message_id': 123}))
     assert result['message_id'] == 123 and methods == ['editMessageText']
+
+
+def test_listing_cap_rotates_instead_of_permanently_losing_tail_leads():
+    from app.announcements import entries
+    body = ''.join(f'<a href="https://example.test/{i}">AI competition {i}</a>' for i in range(26))
+    first = entries(body, 'https://example.test/', ('example.test',), offset=0)
+    second = entries(body, 'https://example.test/', ('example.test',), offset=20)
+    assert len(first) == len(second) == 20
+    assert len({item.id for item in first + second}) == 26

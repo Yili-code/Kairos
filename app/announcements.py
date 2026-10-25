@@ -91,7 +91,7 @@ def next_listing(body: str, base: str, hosts: tuple[str, ...]) -> str | None:
     return None
 
 
-def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None) -> list[Candidate]:
+def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, offset=0) -> list[Candidate]:
     parser = AnnouncementLinks()
     parser.feed(body)
     links = parser.links
@@ -159,7 +159,9 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None) -
         if url not in found or len(title) > len(found[url].text.splitlines()[0]):
             found[url] = Candidate(candidate_id, "public_announcement", title[:600] + "\n" + url,
                                   url, "", "announcement:" + base, category="ai_competition")
-    rows = list(found.values())[:20]
+    all_rows = list(found.values())
+    start = offset % len(all_rows) if all_rows else 0
+    rows = (all_rows[start:] + all_rows[:start])[:20]
     if diagnostics is not None:
         if rows:
             status = 'leads_found'
@@ -221,7 +223,7 @@ class AnnouncementSource:
                                     break
                                 details = {}
                                 try:
-                                    leads = entries(page.text(), page.url, self.hosts, diagnostics=details)
+                                    leads = entries(page.text(), page.url, self.hosts, diagnostics=details, offset=(int(time.time()) // 3600) * 20)
                                 except (ValueError, AssertionError):
                                     receipt['status'] = 'parse_error'
                                     break
