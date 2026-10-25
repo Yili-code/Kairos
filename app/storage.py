@@ -67,7 +67,8 @@ class InMemoryRepository:
 
     def find_by_status(self, statuses: Iterable[str], limit: int = 50) -> list[Candidate]:
         allowed = set(statuses)
-        return [item for item in self.items.values() if item.status in allowed][:limit]
+        return sorted((item for item in self.items.values() if item.status in allowed),
+                      key=lambda item: (item.updated_at, item.id))[:limit]
 
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
@@ -135,7 +136,7 @@ class FirestoreRepository:
         values = list(statuses)
         if not values:
             return []
-        query = self.collection.where("status", "in", values).limit(limit)
+        query = self.collection.where("status", "in", values).order_by("updated_at").limit(limit)
         return [Candidate.from_dict(doc.to_dict()) for doc in query.stream(timeout=10, retry=None)]
 
     def claim_for_card(self, candidate_id: str) -> Candidate | None:

@@ -69,9 +69,9 @@ def main() -> int:
         job_name = f"projects/{PROJECT}/locations/{REGION}/jobs/{JOB_ID}"
         body = {
             "name": job_name,
-            "description": "Kairos public opportunity discovery at 08:00 and 20:00 Asia/Taipei",
+            "description": "Kairos public opportunity discovery hourly in Asia/Taipei",
             "attemptDeadline": "600s",
-            "schedule": "0 8,20 * * *",
+            "schedule": "0 * * * *",
             "timeZone": "Asia/Taipei",
             "httpTarget": {
                 "uri": f"{service_url}/tasks/discover",
@@ -105,7 +105,7 @@ def main() -> int:
     finally:
         scheduler_secret = ""
         access_token = ""
-    print("Kairos scheduler configured for 08:00 and 20:00 Asia/Taipei.")
+    print("Kairos scheduler configured hourly in Asia/Taipei.")
     return 0
 
 

@@ -122,7 +122,8 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                     if self.repository.create_if_absent(candidate):
                         created[candidate.id] = candidate
-                if (model_rate_limited or screened >= self.competition_screen_limit
+                if (model_rate_limited or model_evaluations_attempted >= self.competition_screen_limit
+                        or screened >= self.competition_screen_limit
                         or candidate.id in attempted_competitions
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
@@ -167,6 +168,38 @@ class Workflow:
             except Exception:
                 candidate_errors += 1
 
+        updates_sent = update_errors = 0
+        # Refresh at most one delivered card per run using the shared model budget.
+        for delivered in self.repository.find_by_status([Status.TELEGRAM_SENT], limit=500):
+            if (delivered.category != 'ai_competition' or not delivered.telegram_message_id
+                    or not self.competition_screener
+                    or (assessment_current(delivered.competition, PROFILE)
+                        and not delivered.competition.get('update_pending'))):
+                continue
+            try:
+                if not delivered.competition.get('update_pending'):
+                    if isinstance(self.competition_screener, CompetitionScreener):
+                        await self.competition_screener.screen(delivered, model_budget=take_model_slot)
+                    else:
+                        await self.competition_screener.screen(delivered)
+                    screened += bool(delivered.competition.get('sources'))
+                    delivered.competition['update_pending'] = True
+                    self.repository.save(delivered)
+                # Repeating an edit of the same message is safe after a lost acknowledgement.
+                await self.telegram.send_competition(delivered, edit=True)
+                delivered.competition['update_pending'] = False
+                self.repository.save(delivered)
+                updates_sent += 1
+            except Exception:
+                update_errors += 1
+            break
+
+        # Last-attempt order prevents fresh and repeatedly failing calls starving old work.
+        backlog = self.repository.find_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
+        backlog_before = len(backlog)
+        for candidate in backlog:
+            await ingest(candidate)
         if self.announcement_source:
             try:
                 leads, announcement_errors = await self.announcement_source.discover()
@@ -178,9 +211,6 @@ class Workflow:
                 item.search_term == 'announcement:curated',
                 bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I))), reverse=True):
                 await ingest(candidate)
-        backlog = self.repository.find_by_status([Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING, Status.DISCOVERED], limit=100)
-        for candidate in sorted(backlog, key=lambda item: item.created_at):
-            await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index
@@ -204,6 +234,9 @@ class Workflow:
             for candidate in candidates:
                 await ingest(candidate)
 
+        # Stale queued assessments return to screening without being delivered first.
+        for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=500):
+            recover_empty_assessment(candidate)
         # Keep cards beyond this run's delivery cap in a durable queue.
         queued = {candidate.id: candidate for candidate in self.repository.find_by_status([Status.DISCOVERED], limit=100)}
         queued.update(created)
@@ -262,7 +295,17 @@ class Workflow:
             outcome = await self._deliver_card(candidate.id)
             sent += outcome == 'sent'
             card_errors += outcome == 'failed'
+        remaining = self.repository.find_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
+        from app.storage import screen_claimable
         return {
+            'card_updates_sent': updates_sent,
+            'card_update_errors': update_errors,
+            'screen_queue_before': backlog_before,
+            'screen_queue_after': len(remaining),
+            'screen_queue_due': sum(screen_claimable(item) for item in remaining),
+            'screen_queue_sample_saturated': int(len(remaining) >= 500),
+            'announcement_source_report': getattr(self.announcement_source, 'last_report', []),
             'candidate_errors': candidate_errors,
             'competition_rule_fetch_errors': rule_fetch_errors,
             'model_rate_limited': int(model_rate_limited),

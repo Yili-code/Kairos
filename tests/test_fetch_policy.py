@@ -140,7 +140,7 @@ def test_separate_requests_to_one_origin_are_paced_even_after_lease_release(monk
             fetcher=PublicFetcher(clock=lambda:now[0],spacing=1.0)
             await fetcher(client,URL,ALLOWED)
             await fetcher(client,URL+'/next',ALLOWED)
-        assert calls == [1000.0,1001.0]
+        assert calls[0] == 1000.0 and 1001.0 <= calls[1] <= 1001.1
     asyncio.run(run())
 
 

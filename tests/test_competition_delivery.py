@@ -13,7 +13,7 @@ def test_equivalent_query_urls_are_not_recommended_twice_in_one_or_later_scan():
     class Screener:
         hosts=('edu.tw',)
         async def screen(self,candidate):
-            candidate.competition=evaluate(valid_report(),SOURCES,now=NOW)
+            candidate.competition=evaluate(valid_report(),SOURCES)
             candidate.first_round_score=90
     workflow,_,telegram,_=make_workflow()
     workflow.announcement_source=Source()
@@ -37,7 +37,7 @@ def test_reviewed_official_repost_does_not_create_a_second_recommendation():
     class Screener:
         hosts=('edu.tw',)
         async def screen(self,candidate):
-            candidate.competition=evaluate(valid_report(),SOURCES,now=NOW)
+            candidate.competition=evaluate(valid_report(),SOURCES)
             candidate.first_round_score=90
     workflow,_,telegram,_=make_workflow();workflow.announcement_source=Source();workflow.competition_screener=Screener()
     first=run_immediate(workflow.discover(()));second=run_immediate(workflow.discover(()))

@@ -36,6 +36,9 @@ class TelegramClient:
                 response = await client.post(f"{self.base_url}/{method}", json=payload)
                 if response.status_code in {400, 401, 403, 404, 429}:
                     rejected = response.json()
+                    if (method == 'editMessageText' and response.status_code == 400
+                            and 'message is not modified' in str(rejected.get('description', '')).lower()):
+                        return {'message_id': payload['message_id']}
                     if isinstance(rejected, dict) and rejected.get('ok') is False:
                         parameters = rejected.get('parameters', {})
                         delay = parameters.get('retry_after', 60) if isinstance(parameters, dict) else 60
@@ -77,7 +80,7 @@ class TelegramClient:
         })
         return int(result["message_id"])
 
-    async def send_competition(self, candidate: Candidate) -> int:
+    async def send_competition(self, candidate: Candidate, *, edit=False) -> int:
         report = candidate.competition
         facts, estimate = report.get("facts", {}), report.get("estimate", {})
         values = {
@@ -204,14 +207,19 @@ class TelegramClient:
         else:
             lines.append("\n尚無可核對的規則來源，不能判定符合條件。")
         lines.append("\n<i>耗時含等待、修改、交件與答辯。工具優先使用現有 ChatGPT 額度；報名費另計。估算不代表得獎機率。</i>")
-        result = await self.call("sendMessage", {
+        payload = {
             "chat_id": self.owner_chat_id, "text": "\n".join(lines), "parse_mode": "HTML",
             "disable_web_page_preview": True,
             "reply_markup": {"inline_keyboard": [[
                 {"text": "查看原始來源", "url": candidate.permalink},
                 {"text": "略過", "callback_data": f"q:{candidate.id}:skip"},
             ]]},
-        })
+        }
+        if edit:
+            if not candidate.telegram_message_id:
+                raise ValueError('Cannot edit a card without a receipt')
+            payload['message_id'] = candidate.telegram_message_id
+        result = await self.call('editMessageText' if edit else 'sendMessage', payload)
         return int(result["message_id"])
 
     async def send_question(self, candidate: Candidate, question: str, options: list[tuple[str, str]]) -> None:

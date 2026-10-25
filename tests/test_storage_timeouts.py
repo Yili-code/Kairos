@@ -11,6 +11,7 @@ def test_candidate_rpc_calls_have_explicit_timeouts_without_hidden_read_retries(
         def set(self,*args,**kwargs):calls.append(('set',kwargs))
         def create(self,*args,**kwargs):calls.append(('create',kwargs))
         def where(self,*args,**kwargs):return self
+        def order_by(self,*args):return self
         def limit(self,*args):return self
         def stream(self,**kwargs):calls.append(('stream',kwargs));return []
     repo=FirestoreRepository.__new__(FirestoreRepository);repo.collection=Collection()

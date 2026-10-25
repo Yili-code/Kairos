@@ -318,7 +318,7 @@ def test_card_is_escaped_and_has_no_outreach_or_submission_button():
             return {"message_id": 9}
 
     candidate = Candidate("c", "user", "<b>unsafe</b>", URL, "", "contest", category="ai_competition")
-    candidate.competition = evaluate(valid_report(), SOURCES, now=NOW)
+    candidate.competition = evaluate(valid_report(), SOURCES)
     client = CaptureTelegram("not-a-token", 42)
     assert run_immediate(client.send_candidate(candidate)) == 9
     text = client.payload["text"]
@@ -388,7 +388,7 @@ def test_manual_command_sends_card_without_drafting_or_outreach():
 
         async def screen(self, candidate):
             candidate.category = "ai_competition"
-            candidate.competition = evaluate(valid_report(), SOURCES, now=NOW)
+            candidate.competition = evaluate(valid_report(), SOURCES)
             candidate.risks = candidate.competition["blockers"]
 
     workflow.competition_screener = Screener()
@@ -402,7 +402,7 @@ def test_manual_command_sends_card_without_drafting_or_outreach():
 def test_queued_contest_cannot_be_delivered_after_its_deadline():
     workflow, repo, telegram, _ = make_workflow()
     candidate = Candidate("c", "x", "contest", URL, "", "contest", category="ai_competition")
-    candidate.competition = evaluate(valid_report(), SOURCES, now=NOW)
+    candidate.competition = evaluate(valid_report(), SOURCES)
     candidate.competition["facts"]["deadline"]["value"] = "2020-01-01T00:00:00Z"
     repo.save(candidate)
     assert run_immediate(workflow.discover(()))["cards_sent"] == 0
@@ -448,7 +448,7 @@ def test_repeated_social_posts_for_one_official_event_are_deduplicated():
 
         async def screen(self, candidate):
             calls.append(candidate.id)
-            candidate.competition = evaluate(valid_report(), SOURCES, now=NOW)
+            candidate.competition = evaluate(valid_report(), SOURCES)
             candidate.first_round_score = 90
 
     workflow.threads = Threads()
@@ -471,7 +471,7 @@ def test_per_scan_screen_budget_is_bounded_and_unscreened_leads_survive_next_sca
         hosts = ()
 
         async def screen(self, candidate):
-            candidate.competition = evaluate(valid_report(), SOURCES, now=NOW)
+            candidate.competition = evaluate(valid_report(), SOURCES)
             candidate.first_round_score = 90
 
     workflow.threads, workflow.competition_screener = Threads(), Screener()

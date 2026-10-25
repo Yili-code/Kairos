@@ -152,7 +152,7 @@ def test_related_rule_pages_cover_terms_and_deadlines_with_a_six_document_cap():
     assert len(sources) == 6
 
 
-def test_new_ai_call_is_screened_before_generic_backlog_and_fetch_failure_is_counted():
+def test_backlog_precedes_new_calls_and_fetch_failure_is_counted():
     workflow, repo, _, _ = make_workflow()
     workflow.competition_screen_limit = 1
     repo.save(Candidate('old', 'office', 'design competition', BASE + 'old', '', 'announcement:' + BASE,
@@ -168,7 +168,7 @@ def test_new_ai_call_is_screened_before_generic_backlog_and_fetch_failure_is_cou
             candidate.competition = {'decision': 'pending', 'facts': {'ai_policy': {'value': 'unknown', 'quote': ''}}, 'sources': []}
     workflow.announcement_source, workflow.competition_screener = Source(), Screener()
     result = run_immediate(workflow.discover(()))
-    assert calls == [BASE + 'new', BASE + 'old']
+    assert calls == [BASE + 'old', BASE + 'new']
     assert result['competitions_pending'] == 2
     assert result['competition_errors'] == result['competition_source_errors'] == 2
     assert result['competitions_screened'] == 0

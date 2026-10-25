@@ -107,8 +107,10 @@ class PublicFetcher:
                 name = key('origin', origin)
                 if name not in held:
                     status, until = await self.state.claim(name, owner, self.clock())
-                    if status == 'source_paced':
-                        await asyncio.sleep(max(0, until-self.clock()))
+                    for _ in range(3):
+                        if status != 'source_paced':
+                            break
+                        await asyncio.sleep(max(0.05, until-self.clock()+0.05))
                         status, until = await self.state.claim(name, owner, self.clock())
                     if status:
                         return PublicPage(target, status, retry_at=until)

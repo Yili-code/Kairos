@@ -234,8 +234,8 @@ class AnnouncementSource:
                                     break
                 except TimeoutError:
                     receipts.append({"url": current or base, "board": base, "status": "discovery_timeout"})
-                except (ValueError, AssertionError):
-                    receipts.append({"url": current or base, "board": base, "status": "parse_error"})
+                except Exception:
+                    receipts.append({"url": current or base, "board": base, "status": "source_exception"})
                 return list(rows.values()), receipts
 
             for rows, receipts in await asyncio.gather(*(board(url) for url in selected)):
