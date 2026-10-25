@@ -94,3 +94,21 @@ def test_unexpected_board_failure_does_not_discard_other_boards():
     rows, errors = asyncio.run(source.discover())
     assert len(rows) == 1 and errors == 1
     assert {row['status'] for row in source.last_report} == {'source_exception', 'ok'}
+
+
+def test_screen_metrics_distinguish_retry_from_completed_assessment():
+    workflow, repo, _, _ = make_workflow()
+    candidate = Candidate('old-retry', 'x', 'Online AI competition cash prize', 'https://example.test/', '',
+        'announcement:test', category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN,
+        competition={'fetch_report': [{'status': 'http_403'}]})
+    repo.save(candidate)
+    class Screener:
+        hosts = ()
+        async def screen(self, candidate):
+            candidate.competition = evaluate(valid_report(), SOURCES)
+    workflow.competition_screener = Screener()
+    result = run_immediate(workflow.discover(()))
+    assert result['screen_attempts'] == result['screen_retry_attempts'] == result['screen_completed'] == 1
+    assert result['screen_leads_created'] == result['screen_queue_after'] == 0
+    assert repo.get('old-retry').screen_attempts == 1
+

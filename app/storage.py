@@ -104,6 +104,7 @@ class InMemoryRepository:
         if not candidate or not screen_claimable(candidate):
             return None
         candidate.status = "competition_screening"
+        candidate.screen_attempts += 1
         self.save(candidate)
         return candidate
 
@@ -189,8 +190,9 @@ class FirestoreRepository:
             if not screen_claimable(candidate):
                 return None
             candidate.status = "competition_screening"
+            candidate.screen_attempts += 1
             candidate.updated_at = datetime.now(UTC).isoformat()
-            transaction.update(reference, {"status": candidate.status, "updated_at": candidate.updated_at})
+            transaction.update(reference, {"status": candidate.status, "updated_at": candidate.updated_at, "screen_attempts": candidate.screen_attempts})
             return candidate
 
         return claim(self.client.transaction())

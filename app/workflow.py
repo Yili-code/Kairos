@@ -64,6 +64,9 @@ class Workflow:
         competition_decisions = {"eligible": 0, "pending": 0, "rejected": 0}
         competition_source_errors = 0
         competition_attempts = 0
+        screen_retries = screen_completed = screen_leads_created = 0
+        requeued_ids = set()
+        completed_pending = 0
         announcement_errors = 0
         announcements_discovered = 0
         deadline = time.monotonic() + 480
@@ -96,10 +99,12 @@ class Workflow:
                           and not any(fact.get('quote') for fact in candidate.competition.get('facts', {}).values()))
                          or not assessment_current(candidate.competition, PROFILE))):
                 candidate.status = Status.COMPETITION_PENDING_SCREEN
+                requeued_ids.add(candidate.id)
                 self.repository.save(candidate)
             return candidate
 
         async def ingest_one(candidate):
+            nonlocal screen_retries, screen_completed, screen_leads_created, completed_pending
             nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited, competition_model_errors, competition_info_insufficient
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
@@ -121,6 +126,7 @@ class Workflow:
                 if not self.repository.get(candidate.id):
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                     if self.repository.create_if_absent(candidate):
+                        screen_leads_created += 1
                         created[candidate.id] = candidate
                 if (model_rate_limited or model_evaluations_attempted >= self.competition_screen_limit
                         or screened >= self.competition_screen_limit
@@ -133,6 +139,7 @@ class Workflow:
                     return
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
+                screen_retries += int(candidate.screen_attempts > 1 or bool(candidate.competition.get("fetch_report")))
                 if isinstance(self.competition_screener, CompetitionScreener):
                     await self.competition_screener.screen(candidate, model_budget=take_model_slot)
                 else:
@@ -156,6 +163,9 @@ class Workflow:
                 if candidate.competition.get("decision") == "rejected":
                     candidate.status = Status.SKIPPED
                 self.repository.save(candidate)
+                completed = candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
+                screen_completed += int(completed)
+                completed_pending += int(completed and decision == 'pending')
                 if candidate.id in created:
                     created[candidate.id] = candidate
             elif self.repository.create_if_absent(candidate):
@@ -298,6 +308,14 @@ class Workflow:
         remaining = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
         from app.storage import screen_claimable
+        due_rows = [item for item in remaining if screen_claimable(item)]
+        now = datetime.now(UTC)
+        def age_seconds(item):
+            try:
+                stamp = datetime.fromisoformat(item.updated_at)
+                return max(0, int((now - stamp).total_seconds())) if stamp.tzinfo else 0
+            except (ValueError, TypeError):
+                return 0
         notification_rows = self.repository.find_by_status(
             [Status.TELEGRAM_SENT, Status.TELEGRAM_UNCERTAIN, Status.TELEGRAM_FAILED, Status.DISCOVERED], limit=500)
         return {
@@ -308,6 +326,15 @@ class Workflow:
                 for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,
+            'screen_attempts': competition_attempts,
+            'screen_retry_attempts': screen_retries,
+            'screen_completed': screen_completed,
+            'screen_completed_pending': completed_pending,
+            'screen_leads_created': screen_leads_created,
+            'screen_requeued': len(requeued_ids),
+            'screen_queue_cooling': len(remaining) - len(due_rows),
+            'screen_queue_unattempted': sum(not item.screen_attempts and not item.competition.get('fetch_report') for item in remaining),
+            'screen_oldest_due_age_seconds': max((age_seconds(item) for item in due_rows), default=0),
             'screen_queue_before': backlog_before,
             'screen_queue_after': len(remaining),
             'screen_queue_due': sum(screen_claimable(item) for item in remaining),
