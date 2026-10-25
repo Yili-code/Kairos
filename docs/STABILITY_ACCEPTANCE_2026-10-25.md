@@ -52,6 +52,23 @@ Recovery requires a normal public request from the production environment to obt
 
 The read-only `scripts/audit_scan_acceptance.py` creates bounded, timestamped snapshots without triggering work or sending messages. New `screen_completed` means an item left the screening queue, including evidence-bearing pending decisions; it does not mean all eligibility conditions were established. `screen_queue_cooling` includes work unavailable under cooldown/lease rules, not completed work.
 
+## Final rollout and actual 23:00 continuation
+
+Revision `kairos-git-99054a3` passed health checks with DM automation disabled and received 100% of production traffic before 23:00. Cloud Run request evidence at 23:00:01.807 identifies this revision, `Google-Cloud-Scheduler` and HTTP 200. No additional manual production scan was executed in this acceptance session.
+
+Durable run `run-9c10b45bdef34a16ae4568fe41763901` started at 23:00:01.822 and finished at 23:01:14.094 (72.27 seconds), correctly remaining partial:
+
+- New screening leads: 0; screening attempts: 3; retry attempts: 0; queue departures: 1 (rejected); evidence-bearing pending departures: 0; requeues: 0.
+- Two insufficient-evidence assessments stayed pending with cooldowns. One related rule-page fetch failed, but all three assessments obtained at least one source. Model/provider errors: 0.
+- Queue: 72 → 71; due: 47; cooling/leased: 24; never attempted: 48 → 45. The oldest untouched identity advanced from `contest-0b739848d2af4732beadf0bf` to `contest-616807f43421ce774db8c102`, rather than repeatedly revisiting the same head.
+- All three modeled items were first attempts. The new same-origin denial guard had no qualifying repeated-denial event in this run; its fault behavior is verified by regression tests, not falsely claimed as observed in production here.
+- New cards: 0; card edits: 0; ready cards left: 0; failed/uncertain notifications: 0; stale sent assessments: 0. No eligible item was established.
+- Both original announcement sources still returned HTTP 403. The 23-page listing rotation and deduplication continued without creating duplicates.
+
+Across the actual 20:00–23:00 runs, one new record entered and four assessments left the screening queue, a net reduction of three (74 → 71). This short window shows effective automatic progress, including a change in the oldest pending identity. It does not establish sustainable long-term capacity, restoration of blocked sources, or final eligibility of pending candidates. The remaining oldest untouched batch is approximately 27 hours old, so monitor item identities and completion rates as well as age: many old items were imported within seconds of one another.
+
+Latest read-only snapshot: `work/acceptance-2300.json`, copied to `work/acceptance-latest.json` for the bounded heartbeat. Original baseline remains `work/acceptance-baseline.json`.
+
 ## Bounded follow-up
 
 Heartbeat `kairos` / Kairos 穩定性驗收 checks every six hours with a finite count of thirteen and an explicit deadline of 2026-10-28 23:00 Asia/Taipei. It notifies only for meaningful progress, failures, required decisions, or final expiry; ordinary queue changes stay quiet. At expiry, or when the next check would exceed the deadline, it must issue a final pass/fail record and stop this acceptance tracking. Kairos's own hourly business scheduler must remain enabled.
