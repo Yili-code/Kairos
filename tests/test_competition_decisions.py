@@ -44,7 +44,7 @@ def test_unrelated_country_exclusions_do_not_establish_a_positive_eligibility_gr
 def test_model_cannot_mark_another_universitys_closed_call_eligible():
     fact={'value':'eligible','quote':'參賽資格｜陽明交大在校學生及在職教職員，個人或團隊皆可。','url':NYCU}
     result,reason=validate_eligibility(fact,PROFILE)
-    assert result['value']=='ineligible' and reason=='restricted_to_other_institution'
+    assert result['value']=='unknown' and reason=='affiliation_requires_confirmation'
 
 
 def test_residence_is_not_citizenship_and_unrestricted_entry_is_preserved():
@@ -122,3 +122,44 @@ def test_real_conflicting_deadlines_are_not_hidden_by_timeline_pairing():
     from app.competition_decisions import resolve_deadline
     fact,diagnostic=resolve_deadline({}, {'https://school.edu.tw/rules':'Deadline December 20, 2026. Deadline January 15, 2027.'})
     assert fact['value']=='unknown' and diagnostic=='conflicting_deadline_dates'
+
+
+def test_actual_ntua_range_opening_is_not_a_conflicting_deadline_and_chinese_minutes_are_kept():
+    from app.competition_decisions import resolve_deadline
+    text = '二、徵件期間 2026年10月10日至2027年2月1日 報名截止時間為2027年2月1日23時59分，以臺灣時間為準。'
+    fact, diagnostic = resolve_deadline({}, {NYCU: text})
+    assert fact['value'] == '2027-02-01T23:59:00+08:00'
+    assert fact['quote'] in text and diagnostic == 'sourced_deadline'
+
+
+def test_actual_distinct_closing_dates_remain_unknown_after_range_fix():
+    from app.competition_decisions import resolve_deadline
+    sources = {NYCU: '徵件期間2026年10月10日至2027年2月1日，報名截止時間為2027年2月1日23時59分。',
+               'https://school.edu.tw/other': '報名截止2027年2月2日23時59分。'}
+    fact, diagnostic = resolve_deadline({}, sources)
+    assert fact['value'] == 'unknown' and diagnostic == 'conflicting_deadline_dates'
+
+
+def test_actual_itch_date_before_label_uses_explicit_platform_end_year_and_bare_pm():
+    from app.competition_decisions import resolve_deadline
+    text = ('Submissions open from 2026-10-23 17:00:00 to 2026-10-26 17:00:00 '
+            'Schedule Fri Oct 23, 6PM BST · Submissions open and theme reveal '
+            'Mon Oct 26, 5PM GMT · Submissions close, voting begins '
+            'Oct 26 to Nov 2, 5PM GMT · Community and judge rating Copyright 2003')
+    fact, diagnostic = resolve_deadline({}, {'https://itch.io/jam/example': text})
+    assert fact['value'] == '2026-10-26T17:00:00+00:00'
+    assert fact['quote'] in text and diagnostic == 'sourced_deadline'
+
+
+def test_shorthand_closing_year_is_not_guessed_with_ambiguous_source_years():
+    from app.competition_decisions import resolve_deadline
+    fact, _ = resolve_deadline({}, {NYCU: 'Mon Oct 26, 5PM GMT · Submissions close. Events 2026 and 2027.'})
+    assert fact['value'] == 'unknown'
+
+
+def test_platform_shorthand_does_not_hide_a_real_competing_deadline():
+    from app.competition_decisions import resolve_deadline
+    text = ('Submissions open from 2026-10-23 17:00:00 to 2026-10-26 17:00:00 '
+            'Mon Oct 26, 5PM GMT · Submissions close. Deadline October 27, 2026 17:00 UTC.')
+    fact, diagnostic = resolve_deadline({}, {NYCU: text})
+    assert fact['value'] == 'unknown' and diagnostic == 'conflicting_deadline_dates'

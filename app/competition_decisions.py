@@ -21,6 +21,17 @@ MONTHS['sept'] = 9
 CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
+def noncash_only_evidence(quote):
+    if not isinstance(quote, str):
+        return False
+    return bool(re.search(
+        r'\b(?:all\s+)?(?:prizes?|awards?|rewards?)\s+(?:are|is)\s+(?:(?:entirely|exclusively)\s+)?non[- ]?cash\b|'
+        r'\bonly\s+non[- ]?cash\s+(?:prizes?|awards?|rewards?)\b|'
+        r'\bno\s+cash\s+(?:prizes?|awards?|rewards?)(?:\s+(?:are|is|will be)\s+(?:offered|awarded|provided|available))?\s*(?:[.!;]|$)|'
+        r'(?:獎項|獎勵|獎品)(?:均|全|皆)(?:為|是)非現金|'
+        r'(?:無|沒有|不提供)(?:任何)?現金(?:獎金|獎勵)\s*(?:[，。；]|$)', quote, re.I))
+
+
 def concrete_cash_prize(value):
     if not isinstance(value, str) or re.search(r'\b(?:TBA|TBD|unknown|undetermined)\b|待(?:公[布佈]|公告|確認)|未(?:公[布佈]|公告|確認|定)|另行公[布佈]', value, re.I):
         return False
@@ -126,8 +137,21 @@ def _calendar_date(text, page):
     else:
         match = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(20\d{{2}})\b',text,re.I)
         if not match:
-            return None
-        month, day, year = match.groups()
+            short = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b', text, re.I)
+            if not short:
+                return None
+            month, day = short.groups()
+            # A platform's explicit submission-end date can supply the omitted
+            # year of its matching timeline card, even with an old footer year.
+            referenced = {year for year, mm, dd in re.findall(
+                r'Submissions open from\s+20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+to\s+(20\d{2})-(\d{2})-(\d{2})', page, re.I)
+                if int(mm) == MONTHS[month.lower()] and int(dd) == int(day)}
+            years = referenced or set(re.findall(r'(?<!\d)(20\d{2})(?!\d)', page))
+            if len(years) != 1:
+                return None
+            year = years.pop()
+        else:
+            month, day, year = match.groups()
     try:
         return datetime(int(year),MONTHS[month.lower()],int(day)).date()
     except ValueError:
@@ -136,10 +160,11 @@ def _calendar_date(text, page):
 
 def _clock(text):
     text = re.sub(r'\b(?:UTC|GMT)\s*[+-]\d{1,2}(?::?\d{2})?', '', text, flags=re.I)
-    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點]',text,re.I)
+    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點](?:(\d{1,2})分?)?|(\d{1,2})\s*(?:am|pm)\b',text,re.I)
     if not match:
         return None
-    hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),0)
+    hour, minute = ((int(match[1]),int(match[2])) if match[1] else
+                    (int(match[3]),int(match[4] or 0)) if match[3] else (int(match[5]),0))
     local = text[max(0,match.start()-8):match.end()+5]
     if re.search(r'下午|晚上|(?<![A-Za-z])pm\b',local,re.I) and hour<12:
         hour += 12
@@ -177,12 +202,21 @@ def resolve_deadline(fact, sources):
             rf'{english_date}\s+winners?\s+announced', re.I)
         paired = {match.start('label'): page[match.start('closing'):match.end('label')]
                   for match in timeline.finditer(page)}
+        short_date = rf'(?:{month_names})\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+20\d{{2}})?'
+        for match in re.finditer(rf'(?=(?P<date>{short_date})(?P<gap>[^.;\n]{{0,65}})(?P<label>(?:submissions?|entries)\s+close))', page, re.I):
+            if not re.search(short_date, match['gap'], re.I):
+                paired[match.start('label')] = page[match.start('date'):match.end('label')]
         suffix = re.compile(r'(?P<closing>(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?)\s*(?P<label>截止)', re.I)
         for match in suffix.finditer(page):
             if not re.match(r'.{0,8}(?:延長|延期|展延|改為|調整)', page[match.end():match.end()+16]):
                 paired[match.start('label')] = page[match.start('closing'):match.end('label')]
         starts = [m.start() for m in CLOSING.finditer(page)]
-        starts += [m.start() for m in re.finditer(r'(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?[^。；\n]{0,16}截止',page)]
+        numeric_date = r'(?<!\d)(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?'
+        # Overlap matches so a range's opening date cannot swallow its closing
+        # date. An intervening second date belongs to that later closing label.
+        for match in re.finditer(rf'(?=({numeric_date})([^。；\n]{{0,16}})截止)', page):
+            if not re.search(numeric_date, match[2]):
+                starts.append(match.start())
         for start in starts:
             span = paired.get(start) or re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
             date = _calendar_date(span,page)
@@ -216,17 +250,30 @@ def resolve_deadline(fact, sources):
 
 
 def validate_eligibility(fact, profile):
-    if fact['value'] != 'eligible':
+    if fact['value'] not in {'eligible', 'ineligible'}:
         return fact, None
     quote = fact['quote']
+    school = profile.get('education', {}).get('school', '')
+    if 'NTOU' in school:
+        other = r'(?:陽明交大|陽明交通大學|NYCU|National Yang Ming Chiao Tung University|清華大學|NTHU|淡江大學|Tamkang University)'
+        restriction = r'(?:(?<!不)限|僅限|只限|(?<!not )\bonly\b|(?<!not )restricted to|(?<!not )limited to)'
+        students = r'.{0,14}(?:在校學生|在學學生|師生|學生及|students|staff)'
+        closed_scope = (re.search(restriction + r'.{0,40}' + other + students, quote, re.I)
+            or re.search(r'(?:參賽資格|參賽對象|Eligibility)\s*[：:｜|]?\s*' + other + students, quote, re.I))
+        if closed_scope:
+            if re.search(r'(?:及|或|以及|與|and|or)\s*(?:在職)?(?:教職員|職員|校友|staff|employees|alumni)', quote, re.I):
+                return {**fact, 'value': 'unknown'}, 'affiliation_requires_confirmation'
+            if re.search(r'不限學校|不限校別|其他學校|任何學校|all universities|any university|everyone may enter|anyone may enter', quote, re.I):
+                return {**fact, 'value': 'unknown'}, 'institution_scope_requires_confirmation'
+            return {**fact, 'value': 'ineligible'}, 'restricted_to_other_institution'
+    if re.search(r'AWS Partner Network|APN Terms|who\s+(?:are|must be)\s+(?:employed by|authorized to act on behalf)|'
+                 r'must be (?:a |an )?(?:member|employee|partner) of', quote, re.I):
+        return {**fact, 'value': 'unknown'}, 'affiliation_requires_confirmation'
+    if fact['value'] == 'ineligible':
+        return {**fact, 'value': 'unknown'}, 'ineligibility_not_verified_from_profile'
     positive = re.search(r'不限|皆可|參賽資格|參賽對象|在學學生|大專.{0,8}學生|open to|may enter|can enter|eligible (?:entrants|participants)|eligible to enter|individual artists|individuals|everyone|anyone',quote,re.I)
     if not positive:
         return {**fact,'value':'unknown'},'missing_positive_eligibility_evidence'
-    school = profile.get('education',{}).get('school','')
-    if 'NTOU' in school:
-        other = r'(?:陽明交大|陽明交通大學|NYCU|National Yang Ming Chiao Tung University|清華大學|NTHU|淡江大學|Tamkang University)'
-        if re.search(other+r'.{0,14}(?:在校學生|在學學生|師生|學生及|students|staff)',quote,re.I):
-            return {**fact,'value':'ineligible'},'restricted_to_other_institution'
     if re.search(r'限本校|本校在學|全校師生',quote) and not re.search(r'不限學校|不限校別',quote):
         return {**fact,'value':'unknown'},'institution_scope_requires_confirmation'
     unrestricted = re.search(r'(?:不限|任何|所有).{0,8}國籍|all nationalities|regardless of (?:nationality|citizenship)',quote,re.I)

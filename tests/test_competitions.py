@@ -56,6 +56,11 @@ def test_hard_conflicts_are_rejected(key, value):
     raw = valid_report()
     raw["facts"][key]["value"] = value
     sources = SOURCES
+    if key in {"eligibility", "prize_kind"}:
+        quote = ("Only National Yang Ming Chiao Tung University students may enter this competition."
+                 if key == "eligibility" else "All prizes are non-cash.")
+        raw["facts"][key].update(quote=quote, url=URL)
+        sources = {URL: QUOTE + ' ' + quote}
     if key == "deadline":
         quote = QUOTE.replace("2026-12-01 23:59", "2026-10-01 08:00")
         for fact in raw["facts"].values():
@@ -623,3 +628,21 @@ def test_official_cash_awards_with_amounts_tba_remain_unknown_not_eligible():
     raw['facts']['prize']={'value':'Cash awards TBA','quote':quote,'url':URL}
     report=evaluate(raw,{URL:SOURCES[URL]+' '+quote},now=NOW)
     assert report['facts']['prize']['value']=='unknown' and report['decision']=='pending'
+
+
+def test_actual_itch_imperative_ai_art_creation_permission_is_preserved():
+    quote = 'Build an immersive world with whatever gets you there: AI art, AI audio, coding agents'
+    raw = valid_report()
+    raw['facts']['ai_policy'] = {'value': 'broad_allowed', 'quote': quote, 'url': URL}
+    result = evaluate(raw, {**SOURCES, URL: SOURCES[URL] + ' ' + quote})
+    assert result['facts']['ai_policy']['value'] == 'broad_allowed'
+
+
+def test_imperative_ai_creation_does_not_override_an_explicit_ban_or_api_topic():
+    for quote in ['Do not build an immersive world with AI art.',
+                  'Build an immersive world with AI art. No AI-generated assets are permitted.',
+                  'Build an application that integrates an AI API.']:
+        raw = valid_report()
+        raw['facts']['ai_policy'] = {'value': 'broad_allowed', 'quote': quote, 'url': URL}
+        result = evaluate(raw, {URL: SOURCES[URL] + ' ' + quote})
+        assert result['facts']['ai_policy']['value'] == 'unknown'

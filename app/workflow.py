@@ -10,13 +10,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
-from app.competitions import allowed_url, rules_urls, CompetitionScreener
+from app.competitions import allowed_url, rules_urls, CompetitionScreener, verification_origin
 from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps, canonical_contest_url
 from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
-from app.storage import Repository, card_claimable
+from app.storage import Repository, card_claimable, screen_claimable
 from app.telegram import TelegramClient, TelegramRejected, CompetitionCardIncomplete
 from app.threads_client import ThreadsClient, ThreadsUnavailable
 
@@ -79,6 +79,7 @@ class Workflow:
         origin_denials = {}
         origin_deferred_ids = set()
         completed_pending = 0
+        screen_reports: list[dict[str, Any]] = []
         announcement_errors = 0
         announcements_discovered = 0
         deadline = time.monotonic() + 480
@@ -128,7 +129,7 @@ class Workflow:
             return candidate
 
         async def ingest_one(candidate, *, evaluate_now=True):
-            nonlocal screen_retries, screen_completed, screen_leads_created, completed_pending
+            nonlocal screen_retries, screen_completed, screen_leads_created, completed_pending, candidate_errors
             nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited, competition_model_errors, competition_info_insufficient
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
@@ -160,7 +161,7 @@ class Workflow:
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
                     return
-                origin = urlsplit(urls[0] if urls else candidate.permalink).netloc.lower()
+                origin = verification_origin(urls[0] if urls else candidate.permalink)
                 if origin_denials.get(origin, 0) >= 2:
                     origin_deferred_ids.add(candidate.id)
                     return
@@ -172,17 +173,56 @@ class Workflow:
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
                 screen_retries += int(candidate.screen_attempts > 1 or bool(candidate.competition.get("fetch_report")))
-                if isinstance(self.competition_screener, CompetitionScreener):
-                    await self.competition_screener.screen(candidate, model_budget=take_model_slot)
-                else:
-                    await self.competition_screener.screen(candidate)
-                for receipt in candidate.competition.get('fetch_report', []):
-                    if receipt.get('status') in {'http_403', 'http_429'}:
-                        denied = urlsplit(receipt.get('url', '')).netloc.lower()
-                        origin_denials[denied] = origin_denials.get(denied, 0) + 1
+                report = {'id': candidate.id, 'attempt': candidate.screen_attempts,
+                          'last_successful_step': 'claim', 'result_saved': False,
+                          'model_calls': 0, 'stop_reason': 'in_progress'}
+                screen_reports.append(report)
+                before_models = model_evaluations_attempted
+                try:
+                    if isinstance(self.competition_screener, CompetitionScreener):
+                        await self.competition_screener.screen(candidate, model_budget=take_model_slot)
+                    else:
+                        await self.competition_screener.screen(candidate)
+                except Exception as exc:
+                    # Release an ordinary failed claim durably; cancellation still leaves
+                    # the existing expiring lease and bounded attempt for crash recovery.
+                    candidate = Candidate.from_dict(deepcopy(expected_screen))
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
+                    report.update(stop_reason='unexpected_screen_failure', error_type=type(exc).__name__,
+                                  model_calls=model_evaluations_attempted - before_models)
+                    candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                    candidate.competition['screening_progress'] = {
+                        **report, 'result_saved': True, 'checked_at': datetime.now(UTC).isoformat(),
+                        'next_action': 'manual_review' if candidate.screen_failure_streak >= 3 else 'bounded_retry'}
+                    report['result_saved'] = self.repository.save_screen_result(candidate, expected_screen)
+                    if not report['result_saved']:
+                        report['stop_reason'] = 'snapshot_conflict'
+                    candidate_errors += 1
+                    return
+                report['model_calls'] = model_evaluations_attempted - before_models
+                report['fetch_requests'] = sum(row.get('attempts', 0) for row in candidate.competition.get('fetch_report', []))
+                report['fetch_statuses'] = sorted({row.get('status', 'unknown') for row in candidate.competition.get('fetch_report', [])})
+                has_sources = bool(candidate.competition.get('sources'))
+                analysis_error = candidate.competition.get('analysis_error')
+                verification_error = candidate.competition.get('verification_error')
+                report['assessment_completed'] = bool(has_sources and not analysis_error and not verification_error)
+                report['last_successful_step'] = ('assessment' if report['assessment_completed'] else
+                    'announcement_fetch' if has_sources and verification_error else 'official_fetch' if has_sources else 'claim')
+                report['stop_reason'] = (analysis_error or ('official_content_unavailable' if not has_sources or verification_error else
+                    'awaiting_information' if candidate.competition.get('decision') == 'pending' else 'terminal_decision'))
+                denied_origins = {urlsplit(receipt.get('url', '')).netloc.lower()
+                    for receipt in candidate.competition.get('fetch_report', [])
+                    if receipt.get('status') in {'http_403', 'http_429'}}
+                if (not has_sources or verification_error) and any(receipt.get('status') in {
+                        'official_link_missing', 'official_link_not_allowed', 'event_specific_rules_required', 'dynamic_rules_unavailable', 'event_scope_changed',
+                        'too_large', 'unsupported', 'redirect_blocked'}
+                        for receipt in candidate.competition.get('fetch_report', [])):
+                    denied_origins.add(origin)
+                for denied in denied_origins:
+                    origin_denials[denied] = origin_denials.get(denied, 0) + 1
                 model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
                 rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
-                if candidate.competition.get("sources"):
+                if candidate.competition.get("sources") and not verification_error:
                     screened += 1
                 decision = candidate.competition.get("decision", "pending")
                 competition_decisions[decision] = competition_decisions.get(decision, 0) + 1
@@ -202,8 +242,18 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                     candidate.screen_failure_streak = 0
+                report['decision'] = candidate.competition.get('decision', 'pending')
+                report['unknown_fields'] = [key for key, fact in facts.items() if fact.get('value', 'unknown') == 'unknown']
+                report['notification'] = 'not_eligible' if report['decision'] != 'eligible' else 'awaiting_delivery_gate'
+                candidate.competition['screening_progress'] = {
+                    **report, 'result_saved': True, 'checked_at': datetime.now(UTC).isoformat(),
+                    'next_action': ('none' if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
+                        else 'manual_review' if candidate.screen_failure_streak >= 3 else 'bounded_retry')}
                 if not self.repository.save_screen_result(candidate, expected_screen):
+                    report['stop_reason'] = 'snapshot_conflict'
                     return
+                report['result_saved'] = True
+                report['last_successful_step'] = 'result_saved'
                 completed = candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
                 screen_completed += int(completed)
                 completed_pending += int(completed and decision == 'pending')
@@ -300,9 +350,9 @@ class Workflow:
 
         # Persist discovered leads before allocating any remaining model work. One fresh
         # candidate gets an early turn; the rest retain last-attempt order with old work.
-        backlog_existing = self.repository.find_by_status(
-            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        backlog_before = len(backlog_existing)
+        backlog_existing = self.repository.screen_work_page(limit=500)
+        backlog_before = self.repository.count_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING])
         if self.announcement_source:
             try:
                 leads, announcement_errors = await self.announcement_source.discover()
@@ -331,7 +381,8 @@ class Workflow:
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
             if row.id not in existing_ids]
         for candidate in backlog:
-            await ingest(candidate)
+            if screen_claimable(candidate):
+                await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index
@@ -400,7 +451,8 @@ class Workflow:
             card_errors += outcome == 'failed'
         remaining = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        from app.storage import screen_claimable
+        remaining_total = self.repository.count_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING])
         due_rows = [item for item in remaining if screen_claimable(item)]
         attention = sum(item.screen_failure_streak >= 3 for item in remaining)
         now = datetime.now(UTC)
@@ -427,6 +479,14 @@ class Workflow:
                 for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,
+            'screen_candidate_reports': screen_reports,
+            'screen_results_saved': sum(bool(row.get('result_saved')) for row in screen_reports),
+            'screen_checks_completed': sum(bool(row.get('result_saved') and row.get('assessment_completed')) for row in screen_reports),
+            'screen_waiting_information': sum(row.get('result_saved') and row.get('stop_reason') == 'awaiting_information' for row in screen_reports),
+            'screen_external_blocked': sum(row.get('result_saved') and row.get('stop_reason') == 'official_content_unavailable' for row in screen_reports),
+            'screen_result_conflicts': sum(row.get('stop_reason') == 'snapshot_conflict' for row in screen_reports),
+            'screen_model_calls': sum(row.get('model_calls', 0) for row in screen_reports),
+            'screen_fetch_requests': sum(row.get('fetch_requests', 0) for row in screen_reports),
             'screen_attempts': competition_attempts,
             'screen_retry_attempts': screen_retries,
             'screen_completed': screen_completed,
@@ -438,10 +498,12 @@ class Workflow:
             'screen_queue_cooling': len(remaining) - len(due_rows) - attention,
             'screen_queue_unattempted': sum(not item.screen_attempts and not item.competition.get('fetch_report') for item in remaining),
             'screen_oldest_due_age_seconds': max((age_seconds(item) for item in due_rows), default=0),
+            'screen_oldest_pending_created_at': min((item.created_at for item in remaining), default=''),
             'screen_queue_before': backlog_before,
-            'screen_queue_after': len(remaining),
+            'screen_selection_window_size': len(backlog_existing),
+            'screen_queue_after': remaining_total,
             'screen_queue_due': sum(screen_claimable(item) for item in remaining),
-            'screen_queue_sample_saturated': int(len(remaining) >= 500),
+            'screen_queue_sample_saturated': int(remaining_total > len(remaining)),
             'announcement_source_report': getattr(self.announcement_source, 'last_report', []),
             'candidate_errors': candidate_errors,
             'competition_rule_fetch_errors': rule_fetch_errors,

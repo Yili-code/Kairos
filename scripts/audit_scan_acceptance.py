@@ -77,6 +77,7 @@ def run_summary(rows):
             'duration_seconds': round(row['finished_at'] - row['started_at'], 2)
                 if row.get('finished_at') and row.get('started_at') else None,
             'counts': {key: value for key, value in counts.items() if isinstance(value, (int, float, bool))},
+            'screen_candidate_reports': counts.get('screen_candidate_reports', [])[:9],
             'source_failures': [{'url': receipt.get('url'), 'status': receipt.get('status')}
                 for receipt in counts.get('announcement_source_report', []) if receipt.get('status') != 'ok'],
         })
