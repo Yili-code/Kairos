@@ -51,3 +51,24 @@ def test_cursor_handles_timestamp_ties_wraps_and_readonly_queries_do_not_advance
     assert [r.id for r in repo.screen_work_page(limit=2)] == ['0', '1']
     assert [r.id for r in repo.screen_work_page(limit=2)] == ['2']
     assert [r.id for r in repo.screen_work_page(limit=2)] == ['0', '1']
+
+
+def test_firestore_cursor_initialization_does_not_require_an_unsupported_collection_path_property(monkeypatch):
+    import sys
+    import google.cloud
+    from types import ModuleType, SimpleNamespace
+    from app.storage import FirestoreRepository
+    class Collection:
+        def __init__(self, path):self.id = path.rsplit('/', 1)[-1]
+        def document(self, doc_id):return SimpleNamespace(id=doc_id)
+    class Client:
+        def __init__(self, **kwargs):pass
+        def collection(self, path):return Collection(path)
+    firestore = ModuleType('google.cloud.firestore')
+    firestore.Client = Client
+    monkeypatch.setitem(sys.modules, 'google.cloud.firestore', firestore)
+    monkeypatch.setattr(google.cloud, 'firestore', firestore, raising=False)
+    first = FirestoreRepository('project', 'database', 'tests/first/kairos_opportunities')
+    second = FirestoreRepository('project', 'database', 'tests/second/kairos_opportunities')
+    assert first.collection.id == second.collection.id
+    assert first.screen_cursor_reference.id != second.screen_cursor_reference.id

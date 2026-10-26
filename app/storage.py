@@ -180,8 +180,9 @@ class FirestoreRepository:
         from google.cloud import firestore
 
         self.client = firestore.Client(project=project or None, database=database)
-        self.collection = self.client.collection(collection)
-        cursor_key = hashlib.sha256(self.collection.path.encode()).hexdigest()
+        self.collection_path = collection.strip("/")
+        self.collection = self.client.collection(self.collection_path)
+        cursor_key = hashlib.sha256(self.collection_path.encode()).hexdigest()
         self.screen_cursor_reference = self.client.collection('kairos_screen_cursors').document(cursor_key)
 
     def get(self, candidate_id: str) -> Candidate | None:
