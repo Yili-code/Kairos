@@ -117,3 +117,13 @@ def test_a_prize_quote_cannot_establish_an_entry_fee():
 
 def test_boolean_exchange_values_do_not_become_numeric_currency_rates():
     assert cbc_reference('[{"日期":"20261022","NTD_USD":true}]',now=NOW)['status'] == 'stale_or_unavailable'
+
+
+def test_small_positive_break_even_threshold_is_not_displayed_as_zero():
+    from app.competitions import evaluate
+    from tests.test_competitions import valid_report, SOURCES, NOW as FIXTURE_NOW, capture_card
+    data=evaluate(valid_report(),SOURCES,now=FIXTURE_NOW)
+    url=next(iter(SOURCES))
+    data['facts']['prize']={'value':'NT$1000000000','quote':'The first cash award is NT$1000000000.','url':url}
+    text=capture_card(data)
+    assert '&lt;0.1%' in text and '回本門檻 0.0%' not in text

@@ -207,7 +207,7 @@ class TelegramClient:
             lines.append('含時間成本 NT$' + costs)
             probabilities = [row['break_even_probability'] for row in scenarios]
             if all(value is not None for value in probabilities):
-                lines.append('稅費前回本門檻 ' + '／'.join(f'{value:.1%}' for value in probabilities) + '（所列獎金）')
+                lines.append('稅費前回本門檻 ' + '／'.join('&lt;0.1%' if 0 < value < .001 else f'{value:.1%}' for value in probabilities) + '（所列獎金）')
                 reference = economics.get('exchange_reference') or {}
                 if reference.get('status') == 'ok':
                     lines.append('匯率參考 ' + html.escape(reference['reference_date']) + ' <a href="' + html.escape(reference['source'], quote=True) + '">來源</a>')
