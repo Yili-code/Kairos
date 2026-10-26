@@ -46,3 +46,13 @@ def test_model_cannot_turn_a_sourced_creation_ban_into_broad_permission(quote):
     report = evaluate(raw, {URL: SOURCES[URL] + ' ' + quote}, now=NOW)
     assert report['facts']['ai_policy']['value'] == 'unknown'
     assert report['decision'] == 'pending'
+
+
+@pytest.mark.parametrize('quote', [
+    '四、作品內容及規格：（一）運用生成式AI工具（如Adobe Firefly、Copilot、Gemini、ChatGPT等）創作與書法相關之圖像作品，並將圖像轉製為動畫影片。',
+    '邀請參賽者使用各種生成式AI工具、App或網站，創作具想像力的書法創藝圖像作品。',
+])
+def test_actual_official_imperative_ai_creation_rules_are_not_false_unknowns(quote):
+    raw = valid_report();raw['facts']['ai_policy'] = {'value':'broad_allowed','quote':quote,'url':URL}
+    report = evaluate(raw,{URL:SOURCES[URL]+' '+quote},now=NOW)
+    assert report['facts']['ai_policy']['value'] == 'broad_allowed'

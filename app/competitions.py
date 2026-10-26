@@ -419,7 +419,8 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
             r'use any AI tools.{0,80}(?:coding|asset generation|writing)|'
             r'(?:允許|接受|可|得).{0,35}(?:AI|人工智慧|生成式).{0,35}(?:生成|製作|創作)|'
             r'(?:AI|人工智慧|生成式).{0,20}(?:生成|製作|創作).{0,35}(?:允許|接受|可參賽|皆可|得參賽)|'
-            r'(?:作品|圖像|影片|程式).{0,30}(?:可|允許).{0,25}(?:生成式|AI)', quote, re.I)
+            r'(?:作品|圖像|影片|程式).{0,30}(?:可|允許).{0,25}(?:生成式|AI)|'
+            r'(?:運用|使用|利用|透過).{0,12}(?:生成式\s*)?AI.{0,80}(?:創作|製作|生成)', quote, re.I)
         denial = re.search(
             r'not (?:allowed|permitted|eligible|accepted)|(?:may|must|can) not (?:use|generate|create)|'
             r'no AI|AI.{0,35}(?:prohibited|forbidden)|(?:prohibited|forbidden).{0,35}AI|'
