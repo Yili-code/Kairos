@@ -27,7 +27,9 @@ def finish_state(control, run_id, outcome, counts, error_type, now):
         sorted(k for k in ISSUES if counts.get(k, 0))]).encode()).hexdigest()
     streak = control.get('consecutive_failures', 0) + 1 if outcome != 'succeeded' else 0
     repeated = signature == control.get('failure_signature')
-    alert = outcome != 'succeeded' and repeated and streak >= 2 and control.get('alert_signature') != signature
+    # The generic warning represents one unresolved incident, not each changing
+    # combination of counters. Keep its durable latch until a full success.
+    alert = outcome != 'succeeded' and repeated and streak >= 2 and not control.get('alert_signature')
     updated = {**control, 'lease_until': 0, 'last_finished': summary,
                'consecutive_failures': streak, 'failure_signature': signature if streak else '',
                'alert_signature': signature if alert else control.get('alert_signature', '') if streak else ''}
