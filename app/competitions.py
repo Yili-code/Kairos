@@ -53,6 +53,10 @@ RULE_LINK = re.compile(
 )
 
 
+DIRECTORY_RULE_HOSTS = {"contestwatchers.com", "www.contestwatchers.com", "graphiccompetitions.com", "www.graphiccompetitions.com", "aifilmcontests.com", "www.aifilmcontests.com"}
+OFFICIAL_LINK_LABEL = re.compile(r"^(?:visit\s+)?official\s+(?:website|rules|competition\s+(?:website|page))$|^(?:比賽|競賽|活動)?(?:官方網站|官網)$|^(?:完整|比賽|競賽|徵件)簡章$", re.I)
+
+
 class PageText(HTMLParser):
     def __init__(self, *, base_url: str = '') -> None:
         super().__init__()
@@ -63,6 +67,8 @@ class PageText(HTMLParser):
         self.parts: list[str] = []
         self.attachments: list[str] = []
         self.rule_links: list[str] = []
+        self.official_links: list[str] = []
+        self.anchor: list[str] | None = None
 
     def handle_starttag(self, tag, attrs):
         if tag == "nav":
@@ -76,6 +82,11 @@ class PageText(HTMLParser):
                 footer_rule = urlsplit(urljoin(self.base_url, href)).hostname == urlsplit(self.base_url).hostname
             except ValueError:
                 pass
+        directory_footer = (tag == 'a' and self.footer and self.hidden == self.footer
+            and urlsplit(self.base_url).hostname in DIRECTORY_RULE_HOSTS
+            and 'btn-official-website' in dict(attrs).get('class', '').split())
+        if tag == "a" and (not self.hidden or directory_footer) and not self.navigation:
+            self.anchor = [href, ""]
         if tag == "a" and (not self.hidden or footer_rule):
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
@@ -85,6 +96,12 @@ class PageText(HTMLParser):
             self.hidden += 1
 
     def handle_endtag(self, tag):
+        if tag == "a" and self.anchor is not None:
+            href, label = self.anchor
+            if OFFICIAL_LINK_LABEL.fullmatch(" ".join(label.split())):
+                if len(self.official_links) < MAX_RULE_DOCUMENTS:
+                    self.official_links.append(href)
+            self.anchor = None
         if tag == "footer" and self.footer:
             self.footer -= 1
         if tag == "nav" and self.navigation:
@@ -95,6 +112,8 @@ class PageText(HTMLParser):
     def handle_data(self, data):
         if not self.hidden and not self.navigation and data.strip():
             self.parts.append(data.strip())
+        if self.anchor is not None and not self.navigation and self.hidden == self.footer:
+            self.anchor[1] += data
 
 
 def normalize(text: str) -> str:
@@ -307,20 +326,30 @@ class CompetitionScreener:
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
                     and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next)[\"'][^>]*>\s*</", fetched.text(), re.I))
                 receipt["status"] = "dynamic_rules_unavailable" if dynamic_shell else "ok" if page else "empty_text"
-                if page and not dynamic_shell:
+                directory = urlsplit(fetched.url).hostname in DIRECTORY_RULE_HOSTS
+                if directory:
+                    receipt["role"] = "discovery_only"
+                if page and not dynamic_shell and not directory:
                     limit = min(MAX_RULE_TEXT, remaining_text)
                     sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
                     (i for i, name in enumerate(("rules", "regulations", "terms", "timeline", "application", "enter", "guidelines", "faq", "judging"))
                      if re.search(r"(?:/|-)" + name + r"(?:[-/.?#]|$)", href, re.I)), 99))
-                for href in parser.attachments + rule_links:
+                links = parser.official_links if directory else parser.attachments + parser.official_links + rule_links
+                if directory and not links:
+                    receipts.append({"url": fetched.url, "status": "official_link_missing", "attempts": 0, "bytes": 0})
+                for href in links:
                     attachment = urljoin(fetched.url, href)
                     # Remove analytics only; preserve locale and reject all other unknown parameters.
                     parsed = urlsplit(attachment)
                     query = '&'.join(pair for pair in parsed.query.split('&')
                                      if not pair.split('=', 1)[0].lower().startswith('utm_'))
                     attachment = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
-                    if len(pending) < MAX_RULE_DOCUMENTS and attachment not in pending and allowed_url(attachment, self.hosts):
+                    if not allowed_url(attachment, self.hosts):
+                        if directory:
+                            receipts.append({"url": attachment, "status": "official_link_not_allowed", "attempts": 0, "bytes": 0})
+                        continue
+                    if len(pending) < MAX_RULE_DOCUMENTS and attachment not in pending:
                         pending.append(attachment)
 
 
@@ -365,7 +394,7 @@ class CompetitionScreener:
                 candidate.competition['rank'] = min(candidate.competition.get('rank', 45), 63)
         candidate.competition['source_hashes'] = hashes
         if candidate.competition.get('decision') == 'pending':
-            hard_failure = any(row['status'] in {'http_403', 'http_404', 'unsupported', 'redirect_blocked'} for row in candidate.competition['fetch_report'])
+            hard_failure = any(row['status'] in {'http_403', 'http_404', 'unsupported', 'redirect_blocked', 'official_link_missing', 'official_link_not_allowed'} for row in candidate.competition['fetch_report'])
             insufficient = bool(sources and not candidate.competition.get('analysis_error'))
             candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=24 if hard_failure or insufficient else 4)).isoformat()
         campus = candidate.search_term.startswith("announcement:")
