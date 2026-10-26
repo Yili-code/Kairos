@@ -91,8 +91,25 @@ class PageText(HTMLParser):
         self.anchor: list[str] | None = None
         self.anchor_official_context = False
         self.recent_text = ""
+        self.jam_widget_depth = 0
+        self.jam_widget_seen = False
+        self.jam_user_content = False
+        self.submission_closed = False
 
     def handle_starttag(self, tag, attrs):
+        if tag == 'div':
+            classes = set(dict(attrs).get('class', '').split())
+            if 'jam_content' in classes:
+                self.jam_user_content = True
+            if self.jam_widget_depth:
+                self.jam_widget_depth += 1
+            elif (not self.jam_widget_seen and not self.jam_user_content
+                    and urlsplit(self.base_url).hostname == 'itch.io'
+                    and urlsplit(self.base_url).path.startswith('/jam/')
+                    and {'jam_submitter_widget', 'during_voting'} <= classes
+                    and re.fullmatch(r'jam_submitter_\d+', dict(attrs).get('id', ''))):
+                self.jam_widget_depth = 1
+                self.jam_widget_seen = True
         if tag in {"p", "div", "section", "article", "li"}:
             self.recent_text = ""
         if tag == "nav":
@@ -121,6 +138,8 @@ class PageText(HTMLParser):
             self.hidden += 1
 
     def handle_endtag(self, tag):
+        if tag == 'div' and self.jam_widget_depth:
+            self.jam_widget_depth -= 1
         if tag in {"p", "div", "section", "article", "li"}:
             self.recent_text = ""
         if tag == "a" and self.anchor is not None:
@@ -138,6 +157,8 @@ class PageText(HTMLParser):
             self.hidden -= 1
 
     def handle_data(self, data):
+        if self.jam_widget_depth and data.strip() == 'Submission is closed and voting is now in progress':
+            self.submission_closed = True
         if not self.hidden and not self.navigation and data.strip():
             self.parts.append(data.strip())
             self.recent_text = (self.recent_text + data)[-180:]
@@ -365,8 +386,12 @@ class CompetitionScreener:
                 parser = PageText(base_url=fetched.url)
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
+                if parser.submission_closed:
+                    receipt['platform_submission'] = {
+                        'value': 'closed', 'url': fetched.url,
+                        'quote': 'Submission is closed and voting is now in progress'}
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
-                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root|bh-mount-point)[\"'][^>]*>\s*</", fetched.text(), re.I))
                 if url in scoped and scoped[url].casefold() not in page.casefold():
                     receipt['status'] = 'event_scope_changed'
                     continue
@@ -415,10 +440,14 @@ class CompetitionScreener:
         hashes = {url: hashlib.sha256(page.encode()).hexdigest() for url, page in sources.items()}
         receipts = self._receipt_context.get() or self.last_report
         blocked_official = any(row.get('required_for_rules') and row.get('status') != 'ok' for row in receipts)
+        closed_submission = next((row['platform_submission'] for row in receipts
+            if row.get('platform_submission', {}).get('value') == 'closed'
+            and row['platform_submission']['quote'] in sources.get(row['platform_submission']['url'], '')), None)
+        platform_closed = bool(closed_submission and not blocked_official)
         try:
-            if sources and not blocked_official and model_budget is not None and not model_budget():
+            if sources and not blocked_official and not platform_closed and model_budget is not None and not model_budget():
                 raise RuntimeError('Per-scan model budget exhausted')
-            raw = await self.llm.screen_competition(candidate, sources) if sources and not blocked_official else {}
+            raw = await self.llm.screen_competition(candidate, sources) if sources and not blocked_official and not platform_closed else {}
             if (sources and previous.get('source_hashes') == hashes
                     and previous.get('context_hash') == evaluation_context(PROFILE)
                     and isinstance(raw, dict) and isinstance(raw.get('facts'), dict)):
@@ -434,6 +463,10 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
                 "analysis_error": 'model_rate_limited' if 'HTTP 429' in str(exc) else 'model_failed',
             }
+        if platform_closed:
+            candidate.competition.update(decision='rejected', rank=0,
+                assessment_method='platform_submission_state', platform_submission=closed_submission)
+            candidate.competition['blockers'].insert(0, '平台已關閉投稿')
         if blocked_official:
             candidate.competition["verification_error"] = "official_content_unavailable"
             candidate.competition["decision"] = "pending"

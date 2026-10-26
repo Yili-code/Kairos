@@ -208,3 +208,20 @@ def test_fetch_budget_exhaustion_prevents_partial_source_assessment():
         assert result.competition['verification_error'] == 'official_content_unavailable'
         assert result.competition['fetch_report'][-1]['required_for_rules']
     asyncio.run(check())
+
+
+def test_bhuntr_title_only_app_shell_does_not_consume_a_model_slot():
+    url = 'https://bhuntr.com/tw/competitions/retained-event'
+    html = '<title>雲林開拍：極限3000 - 雲林縣115年公用頻道影片徵件活動（6/30（二）17:00收件截止） - 比賽 - 獎金獵人</title><div id="bh-mount-point"></div><script src="app.js"></script>'
+    class Model:
+        async def screen_competition(self, *args):
+            raise AssertionError('Title-only shell must not consume model quota')
+    def handler(request):
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text=html)
+    async def check():
+        candidate = Candidate('shell', 'office', url, url, '', 'announcement:test')
+        result = await CompetitionScreener(Model(), ('bhuntr.com',), transport=httpx.MockTransport(handler)).screen(candidate)
+        assert result.competition['decision'] == 'pending'
+        assert result.competition['sources'] == []
+        assert result.competition['fetch_report'][0]['status'] == 'dynamic_rules_unavailable'
+    asyncio.run(check())
