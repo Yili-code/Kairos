@@ -92,3 +92,10 @@ def test_compact_am_and_pm_clock_suffixes_do_not_shift_midnight_by_twelve_hours(
     for clock, expected in [('12:00am', '00:00:00'), ('12:00pm', '12:00:00'), ('1:30pm', '13:30:00')]:
         fact, _ = resolve_deadline({}, {url: 'Deadline July 1, 2027 @ ' + clock + ' PST.'})
         assert fact['value'] == '2027-07-01T' + expected + '-08:00'
+
+
+def test_actual_opencv_compact_pm_deadline_is_not_twelve_hours_early():
+    from app.competition_decisions import resolve_deadline
+    url = 'https://opencv26.devpost.com/rules'
+    fact, _ = resolve_deadline({}, {url: 'Deadline: Oct 26, 2026 @ 11:45pm PDT'})
+    assert fact['value'] == '2026-10-26T23:45:00-07:00'
