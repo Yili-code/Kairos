@@ -102,3 +102,28 @@ def test_refresh_fresh_candidate_and_backlog_share_three_model_calls():
     assert calls == [delivered.id, new.id, old.id]
     assert result["model_evaluations_attempted"] == 3
     assert result["card_updates_sent"] == 1
+
+
+def test_retained_unattempted_software_lead_keeps_priority_after_its_discovery_round():
+    workflow, repo, _, _ = make_workflow()
+    old_ids = []
+    for i in range(6):
+        row = lead('https://school.edu.tw/generic/' + str(i))
+        repo.save(row)
+        row.updated_at = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+        old_ids.append(row.id)
+    retained = lead('https://school.edu.tw/retained', 'PayPal-style AI Hackathon')
+    repo.save(retained)
+    calls = []
+    class Model:
+        async def screen_competition(self, candidate, sources):
+            calls.append(candidate.id)
+            return valid_report()
+    class Screener(CompetitionScreener):
+        async def sources(self, text):
+            return SOURCES
+    workflow.competition_screener = Screener(Model(), ('edu.tw',))
+    result = run_immediate(workflow.discover(()))
+    assert calls[0] == retained.id
+    assert calls[1:] == sorted(old_ids)[:2]
+    assert result['model_evaluations_attempted'] == 3

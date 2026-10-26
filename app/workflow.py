@@ -310,11 +310,17 @@ class Workflow:
             announcements_discovered = len(leads)
             for candidate in leads:
                 await ingest(candidate, evaluate_now=False)
-        fresh = sorted((row for row in created.values() if row.category == 'ai_competition'),
-                       key=lambda row: (bool(re.search(r"hackathon|黑客松|software|軟體|(?:mega|game)\s*jam", row.text, re.I)),
-                                        row.search_term == 'announcement:curated',
+        def software_call(row):
+            return bool(re.search(r"hackathon|黑客松|software|軟體|(?:mega|game)\s*jam", row.text, re.I))
+        # Retained first-seen software leads keep their turn after the discovery run;
+        # a manual seed or yesterday's listing must not lose priority merely by waiting.
+        priority_pool = [row for row in backlog_existing if not row.screen_attempts
+                         and not row.competition.get('fetch_report') and software_call(row)]
+        priority_pool.extend(row for row in created.values() if row.category == 'ai_competition')
+        priority_turn = sorted(priority_pool,
+                       key=lambda row: (software_call(row), row.search_term == 'announcement:curated',
                                         bool(re.search(r"\bAI\b|生成式|人工智慧", row.text, re.I))), reverse=True)
-        for candidate in (fresh if self.competition_screen_limit > 1 or not backlog_before else []):
+        for candidate in (priority_turn if self.competition_screen_limit > 1 or not backlog_before else []):
             before = competition_attempts
             await ingest(candidate)
             if competition_attempts > before:

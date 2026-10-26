@@ -51,3 +51,5 @@ After provider I/O, results are written only if the complete claimed snapshot st
 ## Paused-case recovery visibility
 
 The authenticated status response now identifies up to ten paused candidate/card reviews with their source URL, missing-data summary and fetch statuses. The existing Telegram `/status` view shows at most two activities with explicit `/competition URL` recheck actions. Reading status does not change candidates, consume a model call, restart retries or contact anyone. Rechecking is an explicit owner action, not automatic approval or outreach.
+
+A retained, never-attempted software/hackathon lead can also take the priority turn on later rounds. The actual manually found PayPal lead was still unattempted after the discovery release; it must not lose its profile-based priority simply because it was stored before this run. This uses the existing declared opportunity priorities, not inferred tool expertise or relaxed competition requirements. The remainder still follows oldest-attempt order under the same three-model ceiling.
