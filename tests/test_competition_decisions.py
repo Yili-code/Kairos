@@ -99,3 +99,26 @@ def test_actual_opencv_compact_pm_deadline_is_not_twelve_hours_early():
     url = 'https://opencv26.devpost.com/rules'
     fact, _ = resolve_deadline({}, {url: 'Deadline: Oct 26, 2026 @ 11:45pm PDT'})
     assert fact['value'] == '2026-10-26T23:45:00-07:00'
+
+
+def test_actual_date_before_label_timeline_does_not_borrow_winners_date():
+    from app.competition_decisions import resolve_deadline
+    url='https://akool.com/aifilmchallenge'
+    text='Entries close December 20, 2026. Timeline Sept 15, 2026 Challenge opens Dec 20, 2026 Now open Submissions close Jan 15, 2027 Winners announced Meet the Judges'
+    fact,diagnostic=resolve_deadline({}, {url:text})
+    assert fact['value']=='2026-12-21T00:00:00+08:00'
+    assert fact['quote'] in text and 'conflict' not in diagnostic
+
+
+def test_ordinal_dates_and_chinese_date_before_closing_do_not_take_later_awards():
+    from app.competition_decisions import resolve_deadline
+    for text in ['Submissions close December 20th, 2026. Winners announced January 15th, 2027.',
+                 '2026年12月20日截止，頒獎日期2027年1月15日。']:
+        fact,_=resolve_deadline({}, {'https://school.edu.tw/rules':text})
+        assert fact['value']=='2026-12-21T00:00:00+08:00'
+
+
+def test_real_conflicting_deadlines_are_not_hidden_by_timeline_pairing():
+    from app.competition_decisions import resolve_deadline
+    fact,diagnostic=resolve_deadline({}, {'https://school.edu.tw/rules':'Deadline December 20, 2026. Deadline January 15, 2027.'})
+    assert fact['value']=='unknown' and diagnostic=='conflicting_deadline_dates'

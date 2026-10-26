@@ -17,6 +17,7 @@ UNKNOWN = {'value': 'unknown', 'quote': '', 'url': ''}
 TAIPEI = timezone(timedelta(hours=8))
 MONTHS = {name.lower(): number for number in range(1,13)
           for name in (calendar.month_name[number], calendar.month_abbr[number])}
+MONTHS['sept'] = 9
 CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
@@ -119,11 +120,11 @@ def _calendar_date(text, page):
         except ValueError:
             return None
     months = '|'.join(sorted(MONTHS,key=len,reverse=True))
-    match = re.search(rf'\b(\d{{1,2}})\s+({months})\s+(20\d{{2}})\b',text,re.I)
+    match = re.search(rf'\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({months})\s+(20\d{{2}})\b',text,re.I)
     if match:
         day, month, year = match.groups()
     else:
-        match = re.search(rf'\b({months})\s+(\d{{1,2}}),?\s+(20\d{{2}})\b',text,re.I)
+        match = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(20\d{{2}})\b',text,re.I)
         if not match:
             return None
         month, day, year = match.groups()
@@ -167,10 +168,23 @@ def resolve_deadline(fact, sources):
     """Merge matching date evidence; explicit precision always outranks defaults."""
     candidates = []
     for url,page in sources.items():
+        # Some timeline cards put each date before its label. Preserve that literal
+        # span instead of borrowing the following winner-announcement date.
+        month_names = '|'.join(sorted(MONTHS, key=len, reverse=True))
+        english_date = rf'(?:{month_names})\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+20\d{{2}}'
+        timeline = re.compile(rf'{english_date}\s+(?:challenge|entries|submissions)\s+opens?\s+'
+            rf'(?P<closing>{english_date})(?:\s+now open)?\s+(?P<label>(?:submissions?|entries)\s+close)\s+'
+            rf'{english_date}\s+winners?\s+announced', re.I)
+        paired = {match.start('label'): page[match.start('closing'):match.end('label')]
+                  for match in timeline.finditer(page)}
+        suffix = re.compile(r'(?P<closing>(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?)\s*(?P<label>截止)', re.I)
+        for match in suffix.finditer(page):
+            if not re.match(r'.{0,8}(?:延長|延期|展延|改為|調整)', page[match.end():match.end()+16]):
+                paired[match.start('label')] = page[match.start('closing'):match.end('label')]
         starts = [m.start() for m in CLOSING.finditer(page)]
         starts += [m.start() for m in re.finditer(r'(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?[^。；\n]{0,16}截止',page)]
         for start in starts:
-            span = re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
+            span = paired.get(start) or re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
             date = _calendar_date(span,page)
             if date:
                 candidates.append((date,_clock(span),span,url))
