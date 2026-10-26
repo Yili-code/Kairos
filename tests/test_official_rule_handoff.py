@@ -64,3 +64,36 @@ def test_navigation_footer_and_registration_buttons_do_not_become_official_rules
     parser.feed('<nav><a href="https://unrelated.test">Official Website</a></nav><footer><a href="https://footer.test">Official Website</a></footer><a href="https://register.test">Register now</a>')
     assert parser.official_links == []
 
+
+
+def test_actual_campus_announcement_official_label_before_url_anchor_is_followed():
+    parser = PageText(base_url="https://careercenter.ncu.edu.tw/news/show/3038")
+    url = "https://contest.bhuntr.com/tw/bv0y72cyl602gt5zz4/home/"
+    parser.feed('<p>詳細徵件辦法及投稿資訊可參考官方網站：<img src="icon.png"><a href="' + url + '">' + url + '</a></p>')
+    assert parser.official_links == [url]
+    parser.feed('<p><a href="https://unrelated.test">https://unrelated.test</a></p>')
+    assert parser.official_links == [url]
+
+
+def test_missing_dynamic_official_rules_do_not_spend_model_budget_on_parent_summary():
+    campus = "https://school.edu.tw/news/3038"
+    official = "https://contest.bhuntr.com/tw/event/home/"
+    requests = []
+    class Model:
+        async def screen_competition(self, candidate, sources):
+            raise AssertionError("Required official rules were not read")
+    def handler(request):
+        requests.append(str(request.url))
+        body = ('<p>詳細徵件辦法及投稿資訊可參考官方網站：<a href="' + official + '">' + official + '</a></p>') if str(request.url) == campus else '<title>Event</title><div id="core-mount-point"></div><script src="app.js"></script>'
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+    async def check():
+        screener = CompetitionScreener(Model(), ("edu.tw", "bhuntr.com"), transport=httpx.MockTransport(handler))
+        candidate = Candidate("campus", "office", campus, campus, "", "announcement:test")
+        result = await screener.screen(candidate, model_budget=lambda: (_ for _ in ()).throw(AssertionError("Must not take model slot")))
+        assert result.competition["verification_error"] == "official_content_unavailable"
+        assert result.competition["decision"] == "pending"
+        assert result.competition["sources"] == [campus]
+        assert result.competition["fetch_report"][-1]["status"] == "dynamic_rules_unavailable"
+        assert result.competition["fetch_report"][-1]["required_for_rules"]
+    asyncio.run(check())
+    assert requests == [campus, official]

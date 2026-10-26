@@ -69,8 +69,12 @@ class PageText(HTMLParser):
         self.rule_links: list[str] = []
         self.official_links: list[str] = []
         self.anchor: list[str] | None = None
+        self.anchor_official_context = False
+        self.recent_text = ""
 
     def handle_starttag(self, tag, attrs):
+        if tag in {"p", "div", "section", "article", "li"}:
+            self.recent_text = ""
         if tag == "nav":
             self.navigation += 1
         if tag == "footer":
@@ -87,6 +91,7 @@ class PageText(HTMLParser):
             and 'btn-official-website' in dict(attrs).get('class', '').split())
         if tag == "a" and (not self.hidden or directory_footer) and not self.navigation:
             self.anchor = [href, ""]
+            self.anchor_official_context = bool(re.search(r"(?:官方網站|競賽官網|比賽官網|完整簡章|official (?:website|rules))\s*[:：]?\s*$", self.recent_text, re.I))
         if tag == "a" and (not self.hidden or footer_rule):
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
@@ -96,9 +101,12 @@ class PageText(HTMLParser):
             self.hidden += 1
 
     def handle_endtag(self, tag):
+        if tag in {"p", "div", "section", "article", "li"}:
+            self.recent_text = ""
         if tag == "a" and self.anchor is not None:
             href, label = self.anchor
-            if OFFICIAL_LINK_LABEL.fullmatch(" ".join(label.split())):
+            if (OFFICIAL_LINK_LABEL.fullmatch(" ".join(label.split()))
+                    or (self.anchor_official_context and label.strip() == href)):
                 if len(self.official_links) < MAX_RULE_DOCUMENTS:
                     self.official_links.append(href)
             self.anchor = None
@@ -112,6 +120,7 @@ class PageText(HTMLParser):
     def handle_data(self, data):
         if not self.hidden and not self.navigation and data.strip():
             self.parts.append(data.strip())
+            self.recent_text = (self.recent_text + data)[-180:]
         if self.anchor is not None and not self.navigation and self.hidden == self.footer:
             self.anchor[1] += data
 
@@ -295,6 +304,7 @@ class CompetitionScreener:
 
     async def _read_sources(self, text: str, sources: dict[str, str], receipts: list[dict]) -> None:
         pending = rules_urls(text, self.hosts)
+        required_official: set[str] = set()
         for url in list(pending):
             for companion in DEFAULT_COMPETITION_COMPANIONS.get(url, ()):
                 if allowed_url(companion, self.hosts) and companion not in pending:
@@ -310,6 +320,8 @@ class CompetitionScreener:
                 fetched = await self.fetcher(client, url, lambda target: allowed_url(target, self.hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
                            "attempts": fetched.attempts, "bytes": len(fetched.body)}
+                if url in required_official:
+                    receipt["required_for_rules"] = True
                 receipts.append(receipt)
                 if fetched.status != "ok":
                     continue
@@ -324,7 +336,7 @@ class CompetitionScreener:
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
-                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root)[\"'][^>]*>\s*</", fetched.text(), re.I))
                 receipt["status"] = "dynamic_rules_unavailable" if dynamic_shell else "ok" if page else "empty_text"
                 directory = urlsplit(fetched.url).hostname in DIRECTORY_RULE_HOSTS
                 if directory:
@@ -345,22 +357,30 @@ class CompetitionScreener:
                     query = '&'.join(pair for pair in parsed.query.split('&')
                                      if not pair.split('=', 1)[0].lower().startswith('utm_'))
                     attachment = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+                    explicit_official = href in parser.official_links
                     if not allowed_url(attachment, self.hosts):
-                        if directory:
-                            receipts.append({"url": attachment, "status": "official_link_not_allowed", "attempts": 0, "bytes": 0})
+                        if explicit_official:
+                            receipts.append({"url": attachment, "status": "official_link_not_allowed", "attempts": 0, "bytes": 0, "required_for_rules": True})
                         continue
-                    if len(pending) < MAX_RULE_DOCUMENTS and attachment not in pending:
-                        pending.append(attachment)
+                    if explicit_official:
+                        required_official.add(attachment)
+                    if attachment not in pending:
+                        if len(pending) < MAX_RULE_DOCUMENTS:
+                            pending.append(attachment)
+                        elif explicit_official:
+                            receipts.append({"url": attachment, "status": "document_budget_exhausted", "attempts": 0, "bytes": 0, "required_for_rules": True})
 
 
     async def screen(self, candidate: Candidate, *, model_budget=None) -> Candidate:
         previous = candidate.competition
         sources = await self.sources(candidate.text)
         hashes = {url: hashlib.sha256(page.encode()).hexdigest() for url, page in sources.items()}
+        receipts = self._receipt_context.get() or self.last_report
+        blocked_official = any(row.get('required_for_rules') and row.get('status') != 'ok' for row in receipts)
         try:
-            if sources and model_budget is not None and not model_budget():
+            if sources and not blocked_official and model_budget is not None and not model_budget():
                 raise RuntimeError('Per-scan model budget exhausted')
-            raw = await self.llm.screen_competition(candidate, sources) if sources else {}
+            raw = await self.llm.screen_competition(candidate, sources) if sources and not blocked_official else {}
             if (sources and previous.get('source_hashes') == hashes
                     and previous.get('context_hash') == evaluation_context(PROFILE)
                     and isinstance(raw, dict) and isinstance(raw.get('facts'), dict)):
@@ -376,6 +396,8 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
                 "analysis_error": 'model_rate_limited' if 'HTTP 429' in str(exc) else 'model_failed',
             }
+        if blocked_official:
+            candidate.competition["verification_error"] = "official_content_unavailable"
         reference = None
         if self.exchange_reference and any((money(candidate.competition.get('facts', {}).get(key, {}).get('value')) or {}).get('currency') == 'USD'
                                            for key in ('prize', 'registration_amount')):

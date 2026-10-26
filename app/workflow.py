@@ -204,15 +204,16 @@ class Workflow:
                 report['fetch_statuses'] = sorted({row.get('status', 'unknown') for row in candidate.competition.get('fetch_report', [])})
                 has_sources = bool(candidate.competition.get('sources'))
                 analysis_error = candidate.competition.get('analysis_error')
-                report['assessment_completed'] = bool(has_sources and not analysis_error)
+                verification_error = candidate.competition.get('verification_error')
+                report['assessment_completed'] = bool(has_sources and not analysis_error and not verification_error)
                 report['last_successful_step'] = ('assessment' if report['assessment_completed'] else
-                    'official_fetch' if has_sources else 'claim')
-                report['stop_reason'] = (analysis_error or ('official_content_unavailable' if not has_sources else
+                    'announcement_fetch' if has_sources and verification_error else 'official_fetch' if has_sources else 'claim')
+                report['stop_reason'] = (analysis_error or ('official_content_unavailable' if not has_sources or verification_error else
                     'awaiting_information' if candidate.competition.get('decision') == 'pending' else 'terminal_decision'))
                 denied_origins = {urlsplit(receipt.get('url', '')).netloc.lower()
                     for receipt in candidate.competition.get('fetch_report', [])
                     if receipt.get('status') in {'http_403', 'http_429'}}
-                if not has_sources and any(receipt.get('status') in {
+                if (not has_sources or verification_error) and any(receipt.get('status') in {
                         'official_link_missing', 'official_link_not_allowed', 'dynamic_rules_unavailable',
                         'too_large', 'unsupported', 'redirect_blocked'}
                         for receipt in candidate.competition.get('fetch_report', [])):
@@ -221,7 +222,7 @@ class Workflow:
                     origin_denials[denied] = origin_denials.get(denied, 0) + 1
                 model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
                 rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
-                if candidate.competition.get("sources"):
+                if candidate.competition.get("sources") and not verification_error:
                     screened += 1
                 decision = candidate.competition.get("decision", "pending")
                 competition_decisions[decision] = competition_decisions.get(decision, 0) + 1
