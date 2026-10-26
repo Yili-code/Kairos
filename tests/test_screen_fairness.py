@@ -16,10 +16,11 @@ def lead(url, title="AI contest"):
 def test_new_software_lead_and_old_backlog_both_progress_with_existing_budget():
     workflow, repo, _, _ = make_workflow()
     calls = []
+    old_stamp = (datetime.now(UTC) - timedelta(days=2)).isoformat()
     for i in range(8):
         row = lead("https://school.edu.tw/old/" + str(i))
         repo.save(row)
-        row.updated_at = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+        row.updated_at = old_stamp
     class Model:
         async def screen_competition(self, candidate, sources):
             calls.append(candidate.id)
@@ -107,10 +108,11 @@ def test_refresh_fresh_candidate_and_backlog_share_three_model_calls():
 def test_retained_unattempted_software_lead_keeps_priority_after_its_discovery_round():
     workflow, repo, _, _ = make_workflow()
     old_ids = []
+    old_stamp = (datetime.now(UTC) - timedelta(days=2)).isoformat()
     for i in range(6):
         row = lead('https://school.edu.tw/generic/' + str(i))
         repo.save(row)
-        row.updated_at = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+        row.updated_at = old_stamp
         old_ids.append(row.id)
     retained = lead('https://school.edu.tw/retained', 'PayPal-style AI Hackathon')
     repo.save(retained)
