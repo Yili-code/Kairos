@@ -1,0 +1,9 @@
+# Repeated incomplete-scan alert repair
+
+The same generic warning reappeared while no complete recovery had occurred. The stored scan receipt signature hashes the outcome, error class and set of nonzero issue counters. The notifier remembered only the most recently alerted signature. Changing combinations therefore rearmed the same message, including previously seen combinations.
+
+A read-only replay of28 saved production rounds reproduced alert decisions corresponding to the owner screenshots at01:00,04:00 and15:00 Taipei on2026-10-26; the screenshot delivery times are roughly one minute later. No Telegram API history lookup or new message was used to infer delivery. Across the full replay, five alert decisions become one with the repair. This is controlled historical evidence, not post-deployment acceptance.
+
+The generic incomplete-scan alert now has one durable latch for the entire unresolved incident. Full success clears it; a subsequent repeated failure can alert again. The detailed failure signature, consecutive count, per-run issues and partial/failed outcome remain intact. The latch is persisted transactionally before attempting notification, so unknown delivery is not automatically retried. Existing stored alert signatures already act as latched incidents; no data migration or counter reset is required.
+
+Regression scenarios cover changing issue combinations, returning to an earlier combination, process restart, complete recovery followed by recurrence, and an uncertain notification followed by changing issues. Production deployment must preserve the active source and actual live /start implementation. The next natural Scheduler rounds must confirm the same incident remains latched; tests and historical replay do not establish natural-run acceptance or restored screening throughput.

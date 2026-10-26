@@ -123,3 +123,51 @@ def test_paused_review_status_exposes_bounded_actionable_source_rechecks():
     assert '/competition https://cuefilmfest.com/terms-and-conditions' in text
     assert 'AI 規則、完整投入估算' in text and 'Third paused item' not in text
     assert state['review_needed'][0]['title'] == 'Software hackathon'
+
+
+def test_changing_issue_combinations_do_not_realert_before_full_recovery():
+    async def scenario():
+        store = MemoryScanStore(); telegram = FakeTelegram(); runner = ScanRunner(store, telegram)
+        signatures = [
+            {'announcement_source_errors': 2, 'screen_queue_due': 9},
+            {'announcement_source_errors': 2, 'competition_errors': 1, 'screen_queue_due': 10},
+            {'announcement_source_errors': 2, 'card_update_errors': 1, 'screen_queue_due': 11},
+            {'announcement_source_errors': 2, 'screen_queue_due': 12},
+        ]
+        for counts in signatures:
+            async def work(): return counts
+            for _ in range(2): await runner.run(work)
+        assert len(telegram.notifications) == 1
+        assert store.control['last_finished']['counts'] == signatures[-1]
+        assert store.control['consecutive_failures'] == 8
+        # A restarted process uses the same durable latch.
+        runner = ScanRunner(store, telegram)
+        async def still_partial(): return signatures[1]
+        for _ in range(2): await runner.run(still_partial)
+        assert len(telegram.notifications) == 1
+        async def healthy(): return {}
+        await runner.run(healthy)
+        assert store.control['alert_signature'] == ''
+        for _ in range(2): await runner.run(still_partial)
+        assert len(telegram.notifications) == 2
+    asyncio.run(scenario())
+
+
+def test_existing_alert_latch_survives_changing_signature_and_unknown_delivery():
+    async def scenario():
+        store = MemoryScanStore()
+        class UncertainTelegram:
+            calls = 0
+            async def notify(self, text):
+                self.calls += 1
+                raise TimeoutError('Unknown delivery')
+        telegram = UncertainTelegram(); runner = ScanRunner(store, telegram)
+        async def first(): return {'search_errors': 1}
+        async def changed(): return {'announcement_source_errors': 2}
+        for _ in range(2): await runner.run(first)
+        assert telegram.calls == 1 and store.control['alert_signature']
+        runner = ScanRunner(store, telegram)
+        for _ in range(3): await runner.run(changed)
+        assert telegram.calls == 1
+        assert store.control['last_finished']['counts'] == {'announcement_source_errors': 2}
+    asyncio.run(scenario())
