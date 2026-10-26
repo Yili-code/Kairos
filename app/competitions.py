@@ -366,7 +366,7 @@ class CompetitionScreener:
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
-                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root|bh-mount-point)[\"'][^>]*>\s*</", fetched.text(), re.I))
                 if url in scoped and scoped[url].casefold() not in page.casefold():
                     receipt['status'] = 'event_scope_changed'
                     continue
