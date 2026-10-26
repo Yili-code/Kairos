@@ -126,8 +126,21 @@ def _calendar_date(text, page):
     else:
         match = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(20\d{{2}})\b',text,re.I)
         if not match:
-            return None
-        month, day, year = match.groups()
+            short = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b', text, re.I)
+            if not short:
+                return None
+            month, day = short.groups()
+            # A platform's explicit submission-end date can supply the omitted
+            # year of its matching timeline card, even with an old footer year.
+            referenced = {year for year, mm, dd in re.findall(
+                r'Submissions open from\s+20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+to\s+(20\d{2})-(\d{2})-(\d{2})', page, re.I)
+                if int(mm) == MONTHS[month.lower()] and int(dd) == int(day)}
+            years = referenced or set(re.findall(r'(?<!\d)(20\d{2})(?!\d)', page))
+            if len(years) != 1:
+                return None
+            year = years.pop()
+        else:
+            month, day, year = match.groups()
     try:
         return datetime(int(year),MONTHS[month.lower()],int(day)).date()
     except ValueError:
@@ -136,10 +149,11 @@ def _calendar_date(text, page):
 
 def _clock(text):
     text = re.sub(r'\b(?:UTC|GMT)\s*[+-]\d{1,2}(?::?\d{2})?', '', text, flags=re.I)
-    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點](?:(\d{1,2})分?)?',text,re.I)
+    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點](?:(\d{1,2})分?)?|(\d{1,2})\s*(?:am|pm)\b',text,re.I)
     if not match:
         return None
-    hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),int(match[4] or 0))
+    hour, minute = ((int(match[1]),int(match[2])) if match[1] else
+                    (int(match[3]),int(match[4] or 0)) if match[3] else (int(match[5]),0))
     local = text[max(0,match.start()-8):match.end()+5]
     if re.search(r'下午|晚上|(?<![A-Za-z])pm\b',local,re.I) and hour<12:
         hour += 12
@@ -177,6 +191,10 @@ def resolve_deadline(fact, sources):
             rf'{english_date}\s+winners?\s+announced', re.I)
         paired = {match.start('label'): page[match.start('closing'):match.end('label')]
                   for match in timeline.finditer(page)}
+        short_date = rf'(?:{month_names})\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+20\d{{2}})?'
+        for match in re.finditer(rf'(?=(?P<date>{short_date})(?P<gap>[^.;\n]{{0,65}})(?P<label>(?:submissions?|entries)\s+close))', page, re.I):
+            if not re.search(short_date, match['gap'], re.I):
+                paired[match.start('label')] = page[match.start('date'):match.end('label')]
         suffix = re.compile(r'(?P<closing>(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?)\s*(?P<label>截止)', re.I)
         for match in suffix.finditer(page):
             if not re.match(r'.{0,8}(?:延長|延期|展延|改為|調整)', page[match.end():match.end()+16]):

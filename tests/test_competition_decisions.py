@@ -138,3 +138,28 @@ def test_actual_distinct_closing_dates_remain_unknown_after_range_fix():
                'https://school.edu.tw/other': '報名截止2027年2月2日23時59分。'}
     fact, diagnostic = resolve_deadline({}, sources)
     assert fact['value'] == 'unknown' and diagnostic == 'conflicting_deadline_dates'
+
+
+def test_actual_itch_date_before_label_uses_explicit_platform_end_year_and_bare_pm():
+    from app.competition_decisions import resolve_deadline
+    text = ('Submissions open from 2026-10-23 17:00:00 to 2026-10-26 17:00:00 '
+            'Schedule Fri Oct 23, 6PM BST · Submissions open and theme reveal '
+            'Mon Oct 26, 5PM GMT · Submissions close, voting begins '
+            'Oct 26 to Nov 2, 5PM GMT · Community and judge rating Copyright 2003')
+    fact, diagnostic = resolve_deadline({}, {'https://itch.io/jam/example': text})
+    assert fact['value'] == '2026-10-26T17:00:00+00:00'
+    assert fact['quote'] in text and diagnostic == 'sourced_deadline'
+
+
+def test_shorthand_closing_year_is_not_guessed_with_ambiguous_source_years():
+    from app.competition_decisions import resolve_deadline
+    fact, _ = resolve_deadline({}, {NYCU: 'Mon Oct 26, 5PM GMT · Submissions close. Events 2026 and 2027.'})
+    assert fact['value'] == 'unknown'
+
+
+def test_platform_shorthand_does_not_hide_a_real_competing_deadline():
+    from app.competition_decisions import resolve_deadline
+    text = ('Submissions open from 2026-10-23 17:00:00 to 2026-10-26 17:00:00 '
+            'Mon Oct 26, 5PM GMT · Submissions close. Deadline October 27, 2026 17:00 UTC.')
+    fact, diagnostic = resolve_deadline({}, {NYCU: text})
+    assert fact['value'] == 'unknown' and diagnostic == 'conflicting_deadline_dates'
