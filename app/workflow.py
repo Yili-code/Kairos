@@ -126,7 +126,7 @@ class Workflow:
                 self.repository.save(candidate)
             return candidate
 
-        async def ingest_one(candidate):
+        async def ingest_one(candidate, *, evaluate_now=True):
             nonlocal screen_retries, screen_completed, screen_leads_created, completed_pending
             nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited, competition_model_errors, competition_info_insufficient
             existing = recover_empty_assessment(self.repository.get(candidate.id))
@@ -151,6 +151,8 @@ class Workflow:
                     if self.repository.create_if_absent(candidate):
                         screen_leads_created += 1
                         created[candidate.id] = candidate
+                if not evaluate_now:
+                    return
                 if (model_rate_limited or model_evaluations_attempted >= self.competition_screen_limit
                         or screened >= self.competition_screen_limit
                         or candidate.id in attempted_competitions
@@ -206,10 +208,10 @@ class Workflow:
             elif self.repository.create_if_absent(candidate):
                 created[candidate.id] = candidate
 
-        async def ingest(candidate):
+        async def ingest(candidate, *, evaluate_now=True):
             nonlocal candidate_errors
             try:
-                await ingest_one(candidate)
+                await ingest_one(candidate, evaluate_now=evaluate_now)
             except Exception:
                 candidate_errors += 1
 
@@ -271,23 +273,34 @@ class Workflow:
                 update_errors += 1
             break
 
-        # Last-attempt order prevents fresh and repeatedly failing calls starving old work.
-        backlog = self.repository.find_by_status(
+        # Persist discovered leads before allocating any remaining model work. One fresh
+        # candidate gets an early turn; the rest retain last-attempt order with old work.
+        backlog_existing = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        backlog_before = len(backlog)
-        for candidate in backlog:
-            await ingest(candidate)
+        backlog_before = len(backlog_existing)
         if self.announcement_source:
             try:
                 leads, announcement_errors = await self.announcement_source.discover()
             except Exception:
                 leads, announcement_errors = [], 1
             announcements_discovered = len(leads)
-            # Fresh explicit AI calls should not wait behind generic design-award backlog.
-            for candidate in sorted(leads, key=lambda item: (
-                item.search_term == 'announcement:curated',
-                bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I))), reverse=True):
-                await ingest(candidate)
+            for candidate in leads:
+                await ingest(candidate, evaluate_now=False)
+        fresh = sorted((row for row in created.values() if row.category == 'ai_competition'),
+                       key=lambda row: (bool(re.search(r"hackathon|黑客松|software|軟體|(?:mega|game)\s*jam", row.text, re.I)),
+                                        row.search_term == 'announcement:curated',
+                                        bool(re.search(r"\bAI\b|生成式|人工智慧", row.text, re.I))), reverse=True)
+        for candidate in (fresh if self.competition_screen_limit > 1 or not backlog_before else []):
+            before = competition_attempts
+            await ingest(candidate)
+            if competition_attempts > before:
+                break
+        existing_ids = {row.id for row in backlog_existing}
+        backlog = backlog_existing + [row for row in self.repository.find_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
+            if row.id not in existing_ids]
+        for candidate in backlog:
+            await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index

@@ -25,3 +25,9 @@ Regression tests reproduce owner skips during both model work and Telegram editi
 - The next actual business schedule is 2026-10-26 00:00 Asia/Taipei. At this checkpoint there is no scheduled-run evidence for the new revision. Multiple actual rounds, sustainable queue progress, recovery of the two HTTP 403 sources, and a real eligible notification remain unverified. Existing finite acceptance tracking must continue; these repairs are not final acceptance.
 
 Pull request: https://github.com/Yili-code/Kairos/pull/1. Automatic approval review rejected direct promotion to `main`; source remains on `codex/kairos-bounded-recovery` pending explicit merge approval. Production deployment was separately authorized and verified.
+
+## New-candidate starvation repair (2026-10-26)
+
+Discovery now persists the entire bounded announcement batch before allocating screening work. With more than one configured model slot, one newly created candidate gets an early attempt, then the existing queue keeps its original last-attempt order. Software/hackathon titles use the already declared profile priority only for this fresh turn; they do not establish qualifications or tool proficiency. Existing curated entries retain precedence over generic AI titles. A one-slot configuration keeps old work first.
+
+A regression with eight old candidates and five fresh software leads confirms that the fresh candidate and two old candidates are evaluated within the same three-model ceiling, while all five fresh candidates are retained. A separate refresh/new/backlog test confirms all three share that same ceiling. Repeated listing results do not receive another fresh turn; source failures do not prevent healthy old work. This does not prove sufficient throughput for arbitrary arrival rates; production arrivals, departures, paused identities and ages must still be observed over real rounds.
