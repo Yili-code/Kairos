@@ -26,6 +26,25 @@ def escaped_clip(text: str, units: int) -> str:
     return html.escape(clipped)
 
 
+def licence_highlights(quote: str) -> str:
+    # Keep conditional/ambiguous licences literal; the complete source remains stored.
+    if (not re.search(r'non[ -]?exclusive', quote, re.I)
+            or re.search(r'\b(?:not|no|without)\b|except|unless|subject to|provided that|limited to', quote, re.I)
+            or re.search(r'\bexclusive\b', re.sub(r'non[ -]?exclusive', '', quote, flags=re.I), re.I)):
+        return quote
+    terms = []
+    for pattern, label in (
+        (r'non[ -]?exclusive', '非專屬'), (r'worldwide', '全球'),
+        (r'perpetual|in perpetuity', '永久'), (r'royalty[ -]?free', '免權利金'),
+        (r'irrevocable', '不可撤回'), (r'non[ -]?sublicensable', '不可再授權'),
+        (r'(?<!non-)(?<!non )\bsublicensable\b|(?<!non-)(?<!non )\bsublicen[cs]e\b', '含再授權'),
+        (r'non[ -]?transferable', '不可轉讓'), (r'(?<!non-)(?<!non )\btransferable\b', '含轉讓'), (r'display', '展示'), (r'reproduce', '複製'),
+        (r'distribute', '散布'), (r'publish', '發表'), (r'marketing|promotional|promote', '行銷宣傳')):
+        if re.search(pattern, quote, re.I):
+            terms.append(label)
+    return '授權含：' + '、'.join(terms) if len(terms) >= 3 else quote
+
+
 def competition_recommendation(report: dict) -> str:
     """Preference tier, separate from qualification and never an award probability."""
     decision = report.get('decision')
@@ -246,8 +265,13 @@ class TelegramClient:
             labels = {'licence': '授權原文', 'reward': '獎勵限制', 'requirement': '交件限制',
                       'mixed_prize': '獎項含非現金，現金拆分待確認'}
             if condition.get('url') in report.get('sources', []) and condition.get('kind') in labels:
-                conditions.append((labels[condition['kind']],
-                                   condition.get('quote', ''), condition['url']))
+                quote = condition.get('quote', '')
+                label = labels[condition['kind']]
+                if condition['kind'] == 'licence':
+                    compact = licence_highlights(quote)
+                    if compact != quote:
+                        label, quote = '授權要點', compact.removeprefix('授權含：')
+                conditions.append((label, quote, condition['url']))
         if conditions:
             lines.extend(['', '<b>不可漏掉的條件</b>'])
             for label, quote, url in conditions[:4]:

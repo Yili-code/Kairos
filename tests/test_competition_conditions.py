@@ -14,7 +14,8 @@ def test_retained_ownership_does_not_hide_a_separate_marketing_licence():
     report = evaluate(raw, sources, now=NOW)
     assert report['decision_conditions'] == [{'kind': 'licence', 'quote': quote, 'url': URL}]
     text = capture_card(report)
-    assert 'retain ownership' in text and 'royalty-free license' in text and 'marketing' in text
+    assert 'retain ownership' in text and '免權利金' in text and '行銷宣傳' in text
+    assert '非專屬' in text and '全球' in text and '複製' in text and '散布' in text
 
 
 def test_conditional_bonus_is_visible_even_when_the_prize_fact_only_names_the_grand_prize():
@@ -54,3 +55,18 @@ def test_explicit_top_logo_requirement_survives_a_short_deliverables_summary():
     quote = 'The AKOOL logo MUST BE prominently displayed at the top of the video.'
     report = evaluate(valid_report(), {URL: SOURCES[URL] + ' ' + quote}, now=NOW)
     assert '交件限制：' + quote in capture_card(report)
+
+
+def test_conditional_licence_is_not_summarized_as_unconditional_permission():
+    from app.telegram import licence_highlights
+    quote='By entering, you grant a non-exclusive worldwide licence subject to a separate agreement.'
+    assert licence_highlights(quote)==quote
+
+
+def test_compact_licence_does_not_reverse_nontransferable_or_negated_rights():
+    from app.telegram import licence_highlights
+    result=licence_highlights('By entering, you grant a non-exclusive worldwide non-transferable licence.')
+    assert '不可轉讓' in result and '含轉讓' not in result
+    for quote in ['A non-exclusive worldwide licence with no sublicensing.',
+                  'A non-exclusive worldwide licence plus an exclusive option.']:
+        assert licence_highlights(quote)==quote
