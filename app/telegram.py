@@ -10,6 +10,7 @@ import httpx
 
 from app.models import Candidate
 from app.competition_decisions import competition_card_gaps
+from app.economics import economic_review
 
 
 class CompetitionCardIncomplete(ValueError):
@@ -196,6 +197,24 @@ class TelegramClient:
             if isinstance(estimate.get('finals'), (int, float)) and estimate['finals'] > 0:
                 stages.append(f"後續 {estimate['finals']:g}h")
             lines.append('流程估算：' + ' · '.join(stages))
+        economics = economic_review(report, report.get('economics', {}).get('exchange_reference'))
+        scenarios = economics['scenarios']
+        if scenarios:
+            lines.extend(['', '<b>回報試算</b>｜成功率未知'])
+            wages = '／'.join(f"{row['hourly_value_twd']:,}" for row in scenarios)
+            costs = '／'.join(f"{row['cost_twd']:,.0f}" for row in scenarios)
+            lines.append('時薪情境 NT$' + wages)
+            lines.append('含時間成本 NT$' + costs)
+            probabilities = [row['break_even_probability'] for row in scenarios]
+            if all(value is not None for value in probabilities):
+                lines.append('稅費前回本門檻 ' + '／'.join(f'{value:.1%}' for value in probabilities) + '（所列獎金）')
+                reference = economics.get('exchange_reference') or {}
+                if reference.get('status') == 'ok':
+                    lines.append('匯率參考 ' + html.escape(reference['reference_date']) + ' <a href="' + html.escape(reference['source'], quote=True) + '">來源</a>')
+            else:
+                lines.append('回本門檻：單一獎金或匯率待核對')
+        else:
+            lines.append('回報：成本與成功率待核對')
         # Detailed component weights stay in the assessment; keep mobile cards scannable.
 
         labels = {

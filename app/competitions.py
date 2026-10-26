@@ -23,6 +23,7 @@ from app.config import DEFAULT_COMPETITION_COMPANIONS
 from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
 from app.profile import PROFILE
 from app.competition_policy import COMPETITION_POLICY
+from app.economics import economic_review, money
 
 
 FACTS = {
@@ -252,12 +253,13 @@ def pdf_text(body: bytes) -> str:
 
 
 class CompetitionScreener:
-    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0, fetcher=None) -> None:
+    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0, fetcher=None, exchange_reference=None) -> None:
         self.llm = llm
         self.hosts = hosts
         self.fetcher = fetcher or fetch_public
         self.transport = transport
         self.fetch_timeout = fetch_timeout
+        self.exchange_reference = exchange_reference
         self.last_report: list[dict] = []
         self._receipt_context = ContextVar('competition_fetch_receipts', default=None)
 
@@ -345,6 +347,14 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
                 "analysis_error": 'model_rate_limited' if 'HTTP 429' in str(exc) else 'model_failed',
             }
+        reference = None
+        if self.exchange_reference and any((money(candidate.competition.get('facts', {}).get(key, {}).get('value')) or {}).get('currency') == 'USD'
+                                           for key in ('prize', 'registration_amount')):
+            try:
+                reference = await self.exchange_reference.snapshot()
+            except Exception:
+                reference = {'status': 'exchange_reference_unavailable'}
+        candidate.competition['economics'] = economic_review(candidate.competition, reference)
         candidate.category = "ai_competition"
         context_receipts = self._receipt_context.get()
         candidate.competition["fetch_report"] = list(context_receipts if context_receipts is not None else self.last_report)
