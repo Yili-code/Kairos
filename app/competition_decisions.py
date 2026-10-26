@@ -16,7 +16,7 @@ UNKNOWN = {'value': 'unknown', 'quote': '', 'url': ''}
 TAIPEI = timezone(timedelta(hours=8))
 MONTHS = {name.lower(): number for number in range(1,13)
           for name in (calendar.month_name[number], calendar.month_abbr[number])}
-CLOSING = re.compile(r'截止|期限|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
+CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
 def competition_card_gaps(report, *, now=None):
@@ -123,9 +123,9 @@ def _clock(text):
         return None
     hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),0)
     local = text[max(0,match.start()-8):match.end()+5]
-    if re.search(r'下午|晚上|\bpm\b',local,re.I) and hour<12:
+    if re.search(r'下午|晚上|(?<![A-Za-z])pm\b',local,re.I) and hour<12:
         hour += 12
-    elif re.search(r'上午|\bam\b',local,re.I) and hour==12:
+    elif re.search(r'上午|(?<![A-Za-z])am\b',local,re.I) and hour==12:
         hour = 0
     return (hour,minute)
 
@@ -138,7 +138,7 @@ def _zone(text):
     if offset:
         minutes = int(offset[2])*60 + int(offset[3] or 0)
         return timezone(timedelta(minutes=minutes*(1 if offset[1]=='+' else -1))), False
-    for name,hours in {'AEDT':11,'AEST':10,'PDT':-7,'PST':-8,'EDT':-4,'EST':-5}.items():
+    for name,hours in {'AEDT':11,'AEST':10,'PDT':-7,'PST':-8,'EDT':-4,'EST':-5,'KST':9,'JST':9}.items():
         if re.search(r'\b'+name+r'\b',text):
             return timezone(timedelta(hours=hours)),False
     if re.search(r'\b(?:UTC|GMT)\b',text):

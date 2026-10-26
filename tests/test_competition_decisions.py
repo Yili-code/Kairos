@@ -74,3 +74,21 @@ def test_conflicting_licensing_clauses_do_not_get_arbitrarily_recovered():
     sources={'https://campus.edu.tw/a':'參賽者同意作品使用權讓與主辦單位。',
              'https://campus.edu.tw/b':'參賽者保留作品使用權與著作權。'}
     assert not recover_explicit_rights(dict(UNKNOWN),sources)[1]
+
+
+def test_actual_korean_official_deadline_retains_explicit_kst_end_of_day():
+    from app.competition_decisions import resolve_deadline
+    url = 'https://korea.svaiff.com/film'
+    original = '마감 2026.11.25(수) 24:00 KST = 미국 태평양시간 11.25(수) 07:00'
+    fact, diagnostic = resolve_deadline({}, {url: original})
+    assert fact['value'] == '2026-11-26T00:00:00+09:00'
+    assert diagnostic == 'sourced_deadline'
+    assert fact['url'] == url and fact['quote'] in original
+
+
+def test_compact_am_and_pm_clock_suffixes_do_not_shift_midnight_by_twelve_hours():
+    from app.competition_decisions import resolve_deadline
+    url = 'https://event.devpost.com/rules'
+    for clock, expected in [('12:00am', '00:00:00'), ('12:00pm', '12:00:00'), ('1:30pm', '13:30:00')]:
+        fact, _ = resolve_deadline({}, {url: 'Deadline July 1, 2027 @ ' + clock + ' PST.'})
+        assert fact['value'] == '2027-07-01T' + expected + '-08:00'
