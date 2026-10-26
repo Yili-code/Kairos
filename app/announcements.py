@@ -246,15 +246,18 @@ class AnnouncementSource:
                                 visited.add(current)
                                 page = await self.fetcher(client, current, lambda target: allowed_url(target, self.hosts))
                                 status = 'unsupported_content' if page.status == 'ok' and 'application/pdf' in page.content_type else page.status
-                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts, "from_cache": page.from_cache, "retry_at": page.retry_at}
+                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts, "from_cache": page.from_cache, "retry_at": page.retry_at,
+                                           "content_type": page.content_type, "bytes": len(page.body),
+                                           "body_sha256": hashlib.sha256(page.body).hexdigest()}
                                 receipts.append(receipt)
                                 if status != 'ok':
                                     break
                                 details = {}
                                 try:
                                     leads = entries(page.text(), page.url, self.hosts, diagnostics=details, offset=(int(time.time()) // 3600) * 20)
-                                except (ValueError, AssertionError):
+                                except (ValueError, AssertionError) as exc:
                                     receipt['status'] = 'parse_error'
+                                    receipt['parse_error_type'] = type(exc).__name__
                                     break
                                 receipt.update(details)
                                 receipt.update(resolved_url=page.url, leads=len(leads))

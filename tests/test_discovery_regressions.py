@@ -66,6 +66,9 @@ def test_malformed_listing_is_visible_and_does_not_hide_healthy_feed():
         rows, errors = await source.discover()
         assert len(rows) == 1 and errors == 1
         assert source.last_report[0]["status"] == "parse_error"
+        assert source.last_report[0]["parse_error_type"] == "ValueError"
+        assert source.last_report[0]["content_type"].startswith("application/json")
+        assert len(source.last_report[0]["body_sha256"]) == 64
     asyncio.run(check())
 
 
