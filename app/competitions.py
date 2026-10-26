@@ -393,6 +393,28 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         }
         diagnostics[name] = 'grounded' if grounded and value != 'unknown' else 'unknown' if value == 'unknown' else 'invalid_or_unmatched_quote'
 
+    ai = facts['ai_policy']
+    if ai['value'] == 'broad_allowed':
+        quote = ai['quote']
+        # A project integrating an AI API is not a grant to generate its artifacts.
+        permission = re.search(
+            r'(?:AI|artificial intelligence)[- ]?(?:generated|assisted|creation|generation|production).{0,100}'
+            r'(?:allowed|permitted|eligible|accepted|encouraged)|'
+            r'(?:may|can|permitted|allowed|encouraged)(?:\s+to)?(?:\s+freely)?\s+(?:use|using).{0,50}(?:AI|artificial intelligence).{0,70}'
+            r'(?:creat|generat|produc|cod(?:e|ing)|writ|asset)|'
+            r'(?:must be|may be|can be|permitted to be)\s+(?:created|generated|produced).{0,50}(?:using|with).{0,30}(?:AI|artificial intelligence)|'
+            r'use any AI tools.{0,80}(?:coding|asset generation|writing)|'
+            r'(?:允許|接受|可|得).{0,35}(?:AI|人工智慧|生成式).{0,35}(?:生成|製作|創作)|'
+            r'(?:AI|人工智慧|生成式).{0,20}(?:生成|製作|創作).{0,35}(?:允許|接受|可參賽|皆可|得參賽)|'
+            r'(?:作品|圖像|影片|程式).{0,30}(?:可|允許).{0,25}(?:生成式|AI)', quote, re.I)
+        denial = re.search(
+            r'not (?:allowed|permitted|eligible|accepted)|(?:may|must|can) not (?:use|generate|create)|'
+            r'no AI|AI.{0,35}(?:prohibited|forbidden)|(?:prohibited|forbidden).{0,35}AI|'
+            r'(?:禁止|不得|不可|不允許).{0,20}AI|AI.{0,30}(?:禁止|不得|不可|不允許)', quote, re.I)
+        if not permission or denial:
+            facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
+            diagnostics['ai_policy'] = 'missing_explicit_ai_creation_permission'
+
     fee = facts['registration_fee']
     if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase (?:is )?necessary|no (?:purchase or payment|payment or purchase) (?:is )?(?:necessary|required) to (?:enter|win|participate)', fee['quote'], re.I):
         facts['registration_fee'] = {'value': 'unknown', 'quote': '', 'url': ''}

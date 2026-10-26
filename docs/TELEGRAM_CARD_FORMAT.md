@@ -19,3 +19,7 @@ An already-delivered record is historical evidence, not a recommendation or perm
 Automatic competition notifications additionally require `decision=eligible`. A pending card with useful information can only be sent on an explicit owner request. All pending assessments stay in bounded screening recovery with cooldowns; failed or interrupted automatic claims consume the existing three-attempt budget.
 
 A failed refresh retains the previous assessment and message receipt. It cannot replace the useful card with missing fields, counts as unresolved, waits four hours before another attempt, and pauses after three incomplete attempts. Explicitly queued incomplete edits obey the same bounded deferral. The old assessment is not falsely marked freshly verified. Owner decisions and newer versions remain protected by the existing transactional guard.
+
+## AI permission provenance
+
+A live-model replay selected a PayPal clause requiring an application to integrate an AI tool as evidence of broad AI artifact-creation permission. The evaluator now requires explicit creation/generation permission or an explicitly permitted AI-generated/assisted entry. A product's AI topic, required API, or model integration alone stays unknown. Positive component-specific permissions remain usable, while a sourced prohibition cannot be upgraded by an erroneous model enum. This check does not infer permission from silence, override other qualification gates, or establish a probability of winning.

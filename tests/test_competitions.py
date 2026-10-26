@@ -19,7 +19,7 @@ URL = "https://sample.devpost.com/rules"
 QUOTE = ("These are the official contest terms and entry conditions. Everyone may enter. "
          "No attendance or presentation is required in any stage, including awards. "
          "Entrants retain the right to publicly display their entries. Captions must be written personally.")
-QUOTE += ' Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
+QUOTE += ' Substantial AI generation is allowed. Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
 SOURCES = {URL: QUOTE}
 
 
