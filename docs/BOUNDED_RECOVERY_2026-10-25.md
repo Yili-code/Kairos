@@ -47,3 +47,7 @@ An explicit `/competition URL` recheck of a previously delivered contest now edi
 Scheduled and explicit manual reviews of unsent candidates now use the same durable screening claim. An explicit owner review may retry paused work, but cannot overlap an active ten-minute claim. Its attempt is recorded in the same historical counters; unsuccessful manual work never rearms the automatic three-failure budget. Unexpected manual provider failures retain the candidate and a four-hour cooldown without emitting an opportunity card.
 
 After provider I/O, results are written only if the complete claimed snapshot still matches. An old scheduled result cannot erase a newer Telegram receipt, owner answers or assessment, even with identical timestamps. Only assessment/status and retry fields may change; delivery receipts and owner fields remain outside this patch. Regression tests exercise both overlap directions and stale-result conflicts. Real Firestore transaction evidence must be captured separately from these in-memory tests.
+
+## Paused-case recovery visibility
+
+The authenticated status response now identifies up to ten paused candidate/card reviews with their source URL, missing-data summary and fetch statuses. The existing Telegram `/status` view shows at most two activities with explicit `/competition URL` recheck actions. Reading status does not change candidates, consume a model call, restart retries or contact anyone. Rechecking is an explicit owner action, not automatic approval or outreach.

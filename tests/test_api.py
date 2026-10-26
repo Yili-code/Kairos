@@ -147,3 +147,22 @@ def test_production_disables_interactive_api_documentation(monkeypatch) -> None:
     assert app.docs_url is None
     assert app.redoc_url is None
     assert app.openapi_url is None
+
+
+def test_authenticated_status_identifies_paused_checks_without_restarting_them(monkeypatch):
+    from app.storage import InMemoryRepository
+    from app.models import Candidate, Status
+    workflow = FakeWorkflow()
+    workflow.repository = InMemoryRepository()
+    row = Candidate('paused', 'office', 'AI film festival', 'https://cuefilmfest.com/terms-and-conditions', '',
+        'announcement:test', category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN,
+        screen_failure_streak=3, screen_attempts=3,
+        competition={'fetch_report': [{'status': 'dynamic_rules_unavailable'}]})
+    workflow.repository.save(row)
+    before = row.to_dict()
+    app = create_app(settings(monkeypatch), workflow)
+    import asyncio
+    result = asyncio.run(endpoint(app, '/tasks/status')(x_scheduler_secret='scheduler-secret'))
+    assert result['review_needed'][0]['url'] == row.permalink
+    assert result['review_needed'][0]['source_statuses'] == ['dynamic_rules_unavailable']
+    assert row.to_dict() == before and workflow.text_messages == []

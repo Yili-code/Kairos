@@ -122,6 +122,11 @@ def status_text(state):
     stale = bool(state.get('lease_until') and not running)
     issues = ', '.join(f'{k}={last.get("counts", {}).get(k)}' for k in ISSUES if last.get('counts', {}).get(k)) or '無已記錄問題'
     queue = state.get('queue', {})
+    review_lines = []
+    for item in state.get('review_needed', [])[:2]:
+        detail = '、'.join(item.get('information_gaps', [])[:2]) or item.get('reason', '需重新查核')
+        review_lines.append(f"{item.get('title', '活動')}：{detail}\n/competition {item.get('url', '')}")
+    review_text = ('\n需人工處理（最多顯示兩筆）：\n' + '\n'.join(review_lines)) if review_lines else ''
     return (f'Kairos 自動執行狀態（臺灣時間）\n目前：{"執行中" if running else "上輪中斷，等下輪恢復" if stale else "待命"}\n'
             f'最後完成：{stamp(last.get("finished_at"))} · {last.get("status", "未知")}\n'
             f'最後完整成功：{stamp(success.get("finished_at"))}\n連續未完整成功：{state.get("consecutive_failures", 0)}\n'
@@ -130,4 +135,4 @@ def status_text(state):
             f'舊卡更新重試已暫停：{state.get("card_refresh_attention_remaining", 0)}（需修復原因後明確重新查核）\n'
             f'評估重試已暫停：{state.get("screen_attention_remaining", 0)}（連續三次未完成，含中斷）\n'
             '暫停項目保留待處理；修復原因後可用 /competition 網址明確重新查核。\n'
-            '送達不明須人工核對，不會自動重送。完整成功指在單輪設定上限內完成，不代表所有候選均已評估或推薦仍有效。')
+            '送達不明須人工核對，不會自動重送。完整成功指在單輪設定上限內完成，不代表所有候選均已評估或推薦仍有效。' + review_text)

@@ -96,6 +96,16 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             state['screen_attention'] = [{'id': row.id, 'url': row.permalink,
                 'attempts': row.screen_failure_streak, 'last_assessment': row.competition.get('checked_at'),
                 'analysis_error': row.competition.get('analysis_error')} for row in attention[:10]]
+            review_rows = attention + [row for row in rows if row.status == 'telegram_sent'
+                and (row.competition.get('refresh_failure_streak', 0) >= 3
+                     or row.competition.get('refresh_incomplete_attempts', 0) >= 3)]
+            state['review_needed'] = [{'id': row.id, 'title': row.text.splitlines()[0][:80] if row.text else row.id,
+                'url': row.permalink,
+                'reason': '來源或模型查核未完成' if row.competition.get('analysis_error') else '必要規則或投入估算仍未確認',
+                'information_gaps': row.competition.get('information_gaps', []),
+                'source_statuses': sorted({item.get('status', 'unknown') for item in
+                    (row.competition.get('last_refresh_diagnostics') or row.competition).get('fetch_report', [])
+                    if item.get('status') != 'ok'})} for row in review_rows[:10]]
             state['card_refresh_attention_remaining'] = sum(row.status == 'telegram_sent'
                 and (row.competition.get('refresh_failure_streak', 0) >= 3
                      or row.competition.get('refresh_incomplete_attempts', 0) >= 3) for row in rows)

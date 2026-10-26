@@ -109,3 +109,17 @@ def test_status_is_owner_only_and_does_not_evaluate_or_send_outreach(monkeypatch
     asyncio.run(endpoint(app,'/telegram/webhook')(FakeRequest({'message':{'chat':{'id':42},'text':'/status'}}),
                                                   x_telegram_bot_api_secret_token='telegram-secret'))
     assert workflow.text_messages==[] and '最後完整成功' in workflow.telegram.notifications[0]
+
+
+def test_paused_review_status_exposes_bounded_actionable_source_rechecks():
+    from app.scan_runtime import status_text
+    state = {'review_needed': [
+        {'title': 'Software hackathon', 'url': 'https://sample.devpost.com/rules', 'information_gaps': ['AI 規則', '完整投入估算']},
+        {'title': 'Film festival', 'url': 'https://cuefilmfest.com/terms-and-conditions', 'reason': '來源未取得'},
+        {'title': 'Third paused item', 'url': 'https://school.edu.tw/rules', 'reason': 'Paused'},
+    ]}
+    text = status_text(state)
+    assert '/competition https://sample.devpost.com/rules' in text
+    assert '/competition https://cuefilmfest.com/terms-and-conditions' in text
+    assert 'AI 規則、完整投入估算' in text and 'Third paused item' not in text
+    assert state['review_needed'][0]['title'] == 'Software hackathon'
