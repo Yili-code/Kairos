@@ -1,5 +1,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
+import asyncio
+import pytest
 
 from app.models import Candidate, Status
 from app.storage import screen_claimable
@@ -53,11 +55,15 @@ def test_interrupted_attempts_are_persisted_before_provider_call_and_bounded():
         calls = 0
         async def screen(self, candidate):
             self.calls += 1
-            raise RuntimeError('Unexpected provider failure')
+            raise asyncio.CancelledError()
 
     screener = workflow.competition_screener = Screener()
     for _ in range(5):
-        run_immediate(workflow.discover(()))
+        if screener.calls < 3:
+            with pytest.raises(asyncio.CancelledError):
+                run_immediate(workflow.discover(()))
+        else:
+            run_immediate(workflow.discover(()))
         row.updated_at = (datetime.now(UTC) - timedelta(minutes=11)).isoformat()
     assert screener.calls == row.screen_failure_streak == 3
     assert row.status == Status.COMPETITION_SCREENING

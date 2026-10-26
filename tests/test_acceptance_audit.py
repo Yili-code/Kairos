@@ -34,3 +34,13 @@ def test_receipts_preserve_source_failure_and_omit_page_text():
     assert result['source_failures'] == [{'url': 'https://example.test/', 'status': 'http_403'}]
     assert result['counts']['screen_completed'] == 0
     assert 'announcement_source_report' not in result['counts']
+
+
+def test_durable_candidate_stages_are_preserved_in_acceptance_report():
+    reports = [{"id": "contest-test", "last_successful_step": "result_saved", "result_saved": True,
+                "stop_reason": "awaiting_information", "model_calls": 1}]
+    result = run_summary([{"run_id": "run-stages", "counts": {
+        "screen_completed": 0, "screen_checks_completed": 1, "screen_candidate_reports": reports}}])[0]
+    assert result["screen_candidate_reports"] == reports
+    assert result["counts"]["screen_completed"] == 0
+    assert result["counts"]["screen_checks_completed"] == 1
