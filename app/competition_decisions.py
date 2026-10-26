@@ -136,10 +136,10 @@ def _calendar_date(text, page):
 
 def _clock(text):
     text = re.sub(r'\b(?:UTC|GMT)\s*[+-]\d{1,2}(?::?\d{2})?', '', text, flags=re.I)
-    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點]',text,re.I)
+    match = re.search(r'(\d{1,2})[:：](\d{2})|(\d{1,2})[時點](?:(\d{1,2})分?)?',text,re.I)
     if not match:
         return None
-    hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),0)
+    hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),int(match[4] or 0))
     local = text[max(0,match.start()-8):match.end()+5]
     if re.search(r'下午|晚上|(?<![A-Za-z])pm\b',local,re.I) and hour<12:
         hour += 12
@@ -182,7 +182,12 @@ def resolve_deadline(fact, sources):
             if not re.match(r'.{0,8}(?:延長|延期|展延|改為|調整)', page[match.end():match.end()+16]):
                 paired[match.start('label')] = page[match.start('closing'):match.end('label')]
         starts = [m.start() for m in CLOSING.finditer(page)]
-        starts += [m.start() for m in re.finditer(r'(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?[^。；\n]{0,16}截止',page)]
+        numeric_date = r'(?<!\d)(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?'
+        # Overlap matches so a range's opening date cannot swallow its closing
+        # date. An intervening second date belongs to that later closing label.
+        for match in re.finditer(rf'(?=({numeric_date})([^。；\n]{{0,16}})截止)', page):
+            if not re.search(numeric_date, match[2]):
+                starts.append(match.start())
         for start in starts:
             span = paired.get(start) or re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
             date = _calendar_date(span,page)

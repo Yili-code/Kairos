@@ -122,3 +122,19 @@ def test_real_conflicting_deadlines_are_not_hidden_by_timeline_pairing():
     from app.competition_decisions import resolve_deadline
     fact,diagnostic=resolve_deadline({}, {'https://school.edu.tw/rules':'Deadline December 20, 2026. Deadline January 15, 2027.'})
     assert fact['value']=='unknown' and diagnostic=='conflicting_deadline_dates'
+
+
+def test_actual_ntua_range_opening_is_not_a_conflicting_deadline_and_chinese_minutes_are_kept():
+    from app.competition_decisions import resolve_deadline
+    text = '二、徵件期間 2026年10月10日至2027年2月1日 報名截止時間為2027年2月1日23時59分，以臺灣時間為準。'
+    fact, diagnostic = resolve_deadline({}, {NYCU: text})
+    assert fact['value'] == '2027-02-01T23:59:00+08:00'
+    assert fact['quote'] in text and diagnostic == 'sourced_deadline'
+
+
+def test_actual_distinct_closing_dates_remain_unknown_after_range_fix():
+    from app.competition_decisions import resolve_deadline
+    sources = {NYCU: '徵件期間2026年10月10日至2027年2月1日，報名截止時間為2027年2月1日23時59分。',
+               'https://school.edu.tw/other': '報名截止2027年2月2日23時59分。'}
+    fact, diagnostic = resolve_deadline({}, sources)
+    assert fact['value'] == 'unknown' and diagnostic == 'conflicting_deadline_dates'
