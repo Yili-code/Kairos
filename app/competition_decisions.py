@@ -205,14 +205,17 @@ def validate_eligibility(fact, profile):
     return fact,None
 
 
-def recommendation_identity(candidate):
+def canonical_contest_url(url):
     from app.config import DEFAULT_COMPETITION_COMPANIONS
-    permalink = candidate.permalink
-    # Only reviewed explicit aliases are merged; similar titles do not prove identity.
     for primary, companions in DEFAULT_COMPETITION_COMPANIONS.items():
-        if permalink in companions:
-            permalink = primary
-            break
+        if url in companions:
+            return primary
+    return url
+
+
+def recommendation_identity(candidate):
+    # Only reviewed explicit aliases are merged; similar titles do not prove identity.
+    permalink = canonical_contest_url(candidate.permalink)
     try:
         parsed = urlsplit(str(httpx.URL(permalink)))
         url = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,urlencode(sorted(parse_qsl(parsed.query))),''))

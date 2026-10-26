@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls, CompetitionScreener
-from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps
+from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps, canonical_contest_url
 from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
@@ -140,7 +140,7 @@ class Workflow:
             if candidate.category == "ai_competition":
                 urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
                 if urls:
-                    candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
+                    candidate.id = "contest-" + hashlib.sha256(canonical_contest_url(urls[0]).encode()).hexdigest()[:24]
                     canonical = recover_empty_assessment(self.repository.get(candidate.id))
                     if canonical and canonical.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                         return
@@ -665,7 +665,7 @@ class Workflow:
             if not self.competition_screener or not allowed_url(url, hosts):
                 await self.telegram.notify("用法：/competition https://活動主辦頁面\n目前支援：" + ", ".join(hosts)[:400] + "\n僅接受公開頁面；請移除追蹤參數與登入憑證。")
                 return True
-            source = rules_urls(url, hosts)[0]
+            source = canonical_contest_url(rules_urls(url, hosts)[0])
             candidate_id = "contest-" + hashlib.sha256(source.encode()).hexdigest()[:24]
             candidate = self.repository.get(candidate_id)
             if candidate and candidate.status in {Status.TELEGRAM_SENDING, Status.TELEGRAM_UNCERTAIN}:
