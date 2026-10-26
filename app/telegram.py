@@ -10,6 +10,7 @@ import httpx
 
 from app.models import Candidate
 from app.competition_decisions import competition_card_gaps
+from app.economics import economic_review
 
 
 class CompetitionCardIncomplete(ValueError):
@@ -23,6 +24,25 @@ def escaped_clip(text: str, units: int) -> str:
     """Telegram counts UTF-16 units; escaping must happen after clipping."""
     clipped = text.encode("utf-16-le")[:units * 2].decode("utf-16-le", errors="ignore")
     return html.escape(clipped)
+
+
+def licence_highlights(quote: str) -> str:
+    # Keep conditional/ambiguous licences literal; the complete source remains stored.
+    if (not re.search(r'non[ -]?exclusive', quote, re.I)
+            or re.search(r'\b(?:not|no|without)\b|except|unless|subject to|provided that|limited to', quote, re.I)
+            or re.search(r'\bexclusive\b', re.sub(r'non[ -]?exclusive', '', quote, flags=re.I), re.I)):
+        return quote
+    terms = []
+    for pattern, label in (
+        (r'non[ -]?exclusive', '非專屬'), (r'worldwide', '全球'),
+        (r'perpetual|in perpetuity', '永久'), (r'royalty[ -]?free', '免權利金'),
+        (r'irrevocable', '不可撤回'), (r'non[ -]?sublicensable', '不可再授權'),
+        (r'(?<!non-)(?<!non )\bsublicensable\b|(?<!non-)(?<!non )\bsublicen[cs]e\b', '含再授權'),
+        (r'non[ -]?transferable', '不可轉讓'), (r'(?<!non-)(?<!non )\btransferable\b', '含轉讓'), (r'display', '展示'), (r'reproduce', '複製'),
+        (r'distribute', '散布'), (r'publish', '發表'), (r'marketing|promotional|promote', '行銷宣傳')):
+        if re.search(pattern, quote, re.I):
+            terms.append(label)
+    return '授權含：' + '、'.join(terms) if len(terms) >= 3 else quote
 
 
 def competition_recommendation(report: dict) -> str:
@@ -42,12 +62,8 @@ def competition_recommendation(report: dict) -> str:
     hours = number('total_hours', positive=True)
     share = number('ai_share', upper=1)
     cost = number('extra_tools_twd')
-    if hours is not None and hours > 6:
-        return '低｜目前工時估算偏高'
     if share is not None and share < .5:
         return '低｜預估 AI 製作比例偏低'
-    if cost is not None and cost > 300:
-        return '低｜預估工具費偏高'
     facts = report.get('facts', {})
     fee = facts.get('registration_fee', {}).get('value')
     attendance = facts.get('attendance', {}).get('value')
@@ -55,7 +71,7 @@ def competition_recommendation(report: dict) -> str:
             or any(value is None for value in (hours, share, cost))
             or fee not in {'free', 'paid'} or attendance not in {'none', 'online_final'}):
         return '暫不評級'
-    return '高' if fee == 'free' and attendance == 'none' else '中'
+    return '暫不評級｜成功率資料不足'
 
 
 class TelegramRejected(RuntimeError):
@@ -200,6 +216,24 @@ class TelegramClient:
             if isinstance(estimate.get('finals'), (int, float)) and estimate['finals'] > 0:
                 stages.append(f"後續 {estimate['finals']:g}h")
             lines.append('流程估算：' + ' · '.join(stages))
+        economics = economic_review(report, report.get('economics', {}).get('exchange_reference'))
+        scenarios = economics['scenarios']
+        if scenarios:
+            lines.extend(['', '<b>回報試算</b>｜成功率未知'])
+            wages = '／'.join(f"{row['hourly_value_twd']:,}" for row in scenarios)
+            costs = '／'.join(f"{row['cost_twd']:,.0f}" for row in scenarios)
+            lines.append('時薪情境 NT$' + wages)
+            lines.append('含時間成本 NT$' + costs)
+            probabilities = [row['break_even_probability'] for row in scenarios]
+            if all(value is not None for value in probabilities):
+                lines.append('稅費前回本門檻 ' + '／'.join('&lt;0.1%' if 0 < value < .001 else f'{value:.1%}' for value in probabilities) + '（所列獎金）')
+                reference = economics.get('exchange_reference') or {}
+                if reference.get('status') == 'ok':
+                    lines.append('匯率參考 ' + html.escape(reference['reference_date']) + ' <a href="' + html.escape(reference['source'], quote=True) + '">來源</a>')
+            else:
+                lines.append('回本門檻：單一獎金或匯率待核對')
+        else:
+            lines.append('回報：成本與成功率待核對')
         # Detailed component weights stay in the assessment; keep mobile cards scannable.
 
         labels = {
@@ -231,8 +265,13 @@ class TelegramClient:
             labels = {'licence': '授權原文', 'reward': '獎勵限制', 'requirement': '交件限制',
                       'mixed_prize': '獎項含非現金，現金拆分待確認'}
             if condition.get('url') in report.get('sources', []) and condition.get('kind') in labels:
-                conditions.append((labels[condition['kind']],
-                                   condition.get('quote', ''), condition['url']))
+                quote = condition.get('quote', '')
+                label = labels[condition['kind']]
+                if condition['kind'] == 'licence':
+                    compact = licence_highlights(quote)
+                    if compact != quote:
+                        label, quote = '授權要點', compact.removeprefix('授權含：')
+                conditions.append((label, quote, condition['url']))
         if conditions:
             lines.extend(['', '<b>不可漏掉的條件</b>'])
             for label, quote, url in conditions[:4]:

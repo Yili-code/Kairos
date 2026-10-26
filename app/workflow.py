@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import re
 import time
 import uuid
@@ -10,7 +11,7 @@ from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
 from app.competitions import allowed_url, rules_urls, CompetitionScreener
-from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps
+from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps, canonical_contest_url
 from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
@@ -126,20 +127,20 @@ class Workflow:
                 self.repository.save(candidate)
             return candidate
 
-        async def ingest_one(candidate):
+        async def ingest_one(candidate, *, evaluate_now=True):
             nonlocal screen_retries, screen_completed, screen_leads_created, completed_pending
             nonlocal screened, competition_errors, competition_source_errors, competition_attempts, rule_fetch_errors, model_rate_limited, competition_model_errors, competition_info_insufficient
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
-            candidate = existing or candidate
+            candidate = deepcopy(existing or candidate)
             apply_score(candidate)
             if candidate.search_term.startswith("announcement:"):
                 candidate.category = "ai_competition"
             if candidate.category == "ai_competition":
                 urls = rules_urls(candidate.text, getattr(self.competition_screener, "hosts", ()))
                 if urls:
-                    candidate.id = "contest-" + hashlib.sha256(urls[0].encode()).hexdigest()[:24]
+                    candidate.id = "contest-" + hashlib.sha256(canonical_contest_url(urls[0]).encode()).hexdigest()[:24]
                     canonical = recover_empty_assessment(self.repository.get(candidate.id))
                     if canonical and canonical.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                         return
@@ -151,6 +152,8 @@ class Workflow:
                     if self.repository.create_if_absent(candidate):
                         screen_leads_created += 1
                         created[candidate.id] = candidate
+                if not evaluate_now:
+                    return
                 if (model_rate_limited or model_evaluations_attempted >= self.competition_screen_limit
                         or screened >= self.competition_screen_limit
                         or candidate.id in attempted_competitions
@@ -164,6 +167,8 @@ class Workflow:
                 candidate = self.repository.claim_for_screen(candidate.id)
                 if not candidate:
                     return
+                expected_screen = candidate.to_dict()
+                candidate = deepcopy(candidate)
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
                 screen_retries += int(candidate.screen_attempts > 1 or bool(candidate.competition.get("fetch_report")))
@@ -197,7 +202,8 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                     candidate.screen_failure_streak = 0
-                self.repository.save(candidate)
+                if not self.repository.save_screen_result(candidate, expected_screen):
+                    return
                 completed = candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
                 screen_completed += int(completed)
                 completed_pending += int(completed and decision == 'pending')
@@ -206,10 +212,10 @@ class Workflow:
             elif self.repository.create_if_absent(candidate):
                 created[candidate.id] = candidate
 
-        async def ingest(candidate):
+        async def ingest(candidate, *, evaluate_now=True):
             nonlocal candidate_errors
             try:
-                await ingest_one(candidate)
+                await ingest_one(candidate, evaluate_now=evaluate_now)
             except Exception:
                 candidate_errors += 1
 
@@ -222,7 +228,8 @@ class Workflow:
                         and not delivered.competition.get('update_pending')
                         and not delivered.competition.get('information_gaps'))):
                 continue
-            if delivered.competition.get('refresh_incomplete_attempts', 0) >= 3:
+            if (delivered.competition.get('refresh_incomplete_attempts', 0) >= 3
+                    or delivered.competition.get('refresh_failure_streak', 0) >= 3):
                 continue
             retry_at = delivered.competition.get('refresh_retry_after')
             if retry_at:
@@ -232,8 +239,14 @@ class Workflow:
                 except (ValueError, TypeError):
                     continue
             # Provider I/O may overlap an owner decision or a newer assessment.
-            from copy import deepcopy
             delivered = deepcopy(delivered)
+            expected = delivered.to_dict()
+            # Persist the attempt before provider/edit I/O, including process interruption.
+            streak = delivered.competition.get('refresh_failure_streak', 0) + 1
+            delivered.competition['refresh_failure_streak'] = streak
+            delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+            if not self.repository.save_refresh(delivered, expected):
+                continue
             expected = delivered.to_dict()
             try:
                 if delivered.competition.get('update_pending') and competition_card_gaps(delivered.competition):
@@ -249,15 +262,21 @@ class Workflow:
                     else:
                         await self.competition_screener.screen(delivered)
                     screened += bool(delivered.competition.get('sources'))
+                    model_rate_limited = model_rate_limited or delivered.competition.get('analysis_error') == 'model_rate_limited'
                     gaps = competition_card_gaps(delivered.competition)
                     if gaps:
+                        diagnostics = {key: delivered.competition.get(key) for key in
+                            ('checked_at', 'analysis_error', 'fetch_report', 'sources', 'fact_diagnostics')}
                         delivered = Candidate.from_dict(deepcopy(expected))
+                        delivered.competition['last_refresh_diagnostics'] = diagnostics
                         delivered.competition['information_gaps'] = gaps
                         delivered.competition['refresh_incomplete_attempts'] = delivered.competition.get('refresh_incomplete_attempts', 0) + 1
                         delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
                         self.repository.save_refresh(delivered, expected)
                         update_errors += 1
                         break
+                    delivered.competition['refresh_failure_streak'] = streak
+                    delivered.competition['refresh_retry_after'] = expected['competition']['refresh_retry_after']
                     delivered.competition['update_pending'] = True
                     if not self.repository.save_refresh(delivered, expected):
                         continue
@@ -265,29 +284,54 @@ class Workflow:
                 # Repeating an edit of the same message is safe after a lost acknowledgement.
                 await self.telegram.send_competition(delivered, edit=True)
                 delivered.competition['update_pending'] = False
+                delivered.competition['refresh_failure_streak'] = 0
+                delivered.competition['refresh_retry_after'] = ''
+                delivered.competition['refresh_last_error'] = ''
                 self.repository.save_refresh(delivered, expected)
                 updates_sent += 1
-            except Exception:
+            except Exception as exc:
+                # Restore the last committed snapshot; exception text may contain credentials.
+                delivered = Candidate.from_dict(deepcopy(expected))
+                delivered.competition['refresh_last_error'] = (
+                    'telegram_rejected' if isinstance(exc, TelegramRejected) else 'refresh_failed')
+                self.repository.save_refresh(delivered, expected)
                 update_errors += 1
             break
 
-        # Last-attempt order prevents fresh and repeatedly failing calls starving old work.
-        backlog = self.repository.find_by_status(
+        # Persist discovered leads before allocating any remaining model work. One fresh
+        # candidate gets an early turn; the rest retain last-attempt order with old work.
+        backlog_existing = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        backlog_before = len(backlog)
-        for candidate in backlog:
-            await ingest(candidate)
+        backlog_before = len(backlog_existing)
         if self.announcement_source:
             try:
                 leads, announcement_errors = await self.announcement_source.discover()
             except Exception:
                 leads, announcement_errors = [], 1
             announcements_discovered = len(leads)
-            # Fresh explicit AI calls should not wait behind generic design-award backlog.
-            for candidate in sorted(leads, key=lambda item: (
-                item.search_term == 'announcement:curated',
-                bool(re.search(r"\bAI\b|生成式|人工智慧", item.text, re.I))), reverse=True):
-                await ingest(candidate)
+            for candidate in leads:
+                await ingest(candidate, evaluate_now=False)
+        def software_call(row):
+            return bool(re.search(r"hackathon|黑客松|software|軟體|(?:mega|game)\s*jam", row.text, re.I))
+        # Retained first-seen software leads keep their turn after the discovery run;
+        # a manual seed or yesterday's listing must not lose priority merely by waiting.
+        priority_pool = [row for row in backlog_existing if not row.screen_attempts
+                         and not row.competition.get('fetch_report') and software_call(row)]
+        priority_pool.extend(row for row in created.values() if row.category == 'ai_competition')
+        priority_turn = sorted(priority_pool,
+                       key=lambda row: (software_call(row), row.search_term == 'announcement:curated',
+                                        bool(re.search(r"\bAI\b|生成式|人工智慧", row.text, re.I))), reverse=True)
+        for candidate in (priority_turn if self.competition_screen_limit > 1 or not backlog_before else []):
+            before = competition_attempts
+            await ingest(candidate)
+            if competition_attempts > before:
+                break
+        existing_ids = {row.id for row in backlog_existing}
+        backlog = backlog_existing + [row for row in self.repository.find_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
+            if row.id not in existing_ids]
+        for candidate in backlog:
+            await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index
@@ -376,6 +420,10 @@ class Workflow:
             'stale_sent_remaining': sum(item.status == Status.TELEGRAM_SENT and item.category == 'ai_competition'
                 and (not assessment_current(item.competition, PROFILE) or bool(item.competition.get('update_pending'))
                      or bool(item.competition.get('information_gaps')))
+                for item in notification_rows),
+            'card_refresh_attention_remaining': sum(item.status == Status.TELEGRAM_SENT
+                and (item.competition.get('refresh_failure_streak', 0) >= 3
+                     or item.competition.get('refresh_incomplete_attempts', 0) >= 3)
                 for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,
@@ -618,23 +666,48 @@ class Workflow:
             if not self.competition_screener or not allowed_url(url, hosts):
                 await self.telegram.notify("用法：/competition https://活動主辦頁面\n目前支援：" + ", ".join(hosts)[:400] + "\n僅接受公開頁面；請移除追蹤參數與登入憑證。")
                 return True
-            source = rules_urls(url, hosts)[0]
+            source = canonical_contest_url(rules_urls(url, hosts)[0])
             candidate_id = "contest-" + hashlib.sha256(source.encode()).hexdigest()[:24]
             candidate = self.repository.get(candidate_id)
             if candidate and candidate.status in {Status.TELEGRAM_SENDING, Status.TELEGRAM_UNCERTAIN}:
                 await self.telegram.notify("前次卡片送達結果尚未確認，請先檢查 Telegram，避免重複發送。")
                 return True
-            candidate = candidate or Candidate(candidate_id, "organizer", url, url, "", "/competition")
-            from copy import deepcopy
+            if not candidate:
+                candidate = Candidate(candidate_id, "organizer", url, url, "", "/competition",
+                    category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN)
+                self.repository.create_if_absent(candidate)
+                candidate = self.repository.get(candidate_id)
+            if candidate.status != Status.TELEGRAM_SENT:
+                candidate = self.repository.claim_for_screen(candidate_id, manual=True)
+                if not candidate:
+                    await self.telegram.notify('這筆活動正在查核或處理通知，請稍後查看結果。')
+                    return True
             candidate = deepcopy(candidate)
             previous = candidate.to_dict()
-            await self.competition_screener.screen(candidate)
+            try:
+                await self.competition_screener.screen(candidate)
+            except Exception:
+                if previous['status'] == Status.COMPETITION_SCREENING:
+                    candidate = Candidate.from_dict(deepcopy(previous))
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
+                    candidate.competition['analysis_error'] = 'manual_review_failed'
+                    candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                    self.repository.save_screen_result(candidate, previous)
+                await self.telegram.notify('本次查核未完成，已保留進度；不會發送機會卡或自動重送。')
+                return True
             if (candidate.competition.get('decision') == 'rejected'
                     or not competition_card_gaps(candidate.competition)):
                 candidate.screen_failure_streak = 0
             if candidate.competition.get("decision") == "rejected":
-                candidate.status = Status.SKIPPED
-                self.repository.save(candidate)
+                if previous['status'] == Status.TELEGRAM_SENT:
+                    if not self.repository.save_refresh(candidate, previous):
+                        await self.telegram.notify('資料已被更新，請查看目前卡片後再決定是否重新查核。')
+                        return True
+                else:
+                    candidate.status = Status.SKIPPED
+                    if not self.repository.save_screen_result(candidate, previous):
+                        await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                        return True
                 await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
                 return True
             gaps = competition_card_gaps(candidate.competition)
@@ -645,14 +718,37 @@ class Workflow:
                     self.repository.save_refresh(candidate, previous)
                 else:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
-                    self.repository.save(candidate)
+                    if not self.repository.save_screen_result(candidate, previous):
+                        await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                        return True
                 await self.telegram.notify('資料不足，已留待補查：' + '、'.join(gaps))
+                return True
+            if previous['status'] == Status.TELEGRAM_SENT and previous.get('telegram_message_id'):
+                # An explicit recheck updates its existing card; it is not a resend request.
+                candidate.competition['update_pending'] = True
+                candidate.competition['refresh_failure_streak'] = 1
+                candidate.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                if not self.repository.save_refresh(candidate, previous):
+                    await self.telegram.notify('資料已被更新，請查看目前卡片後再決定是否重新查核。')
+                    return True
+                expected = candidate.to_dict()
+                try:
+                    await self.telegram.send_competition(candidate, edit=True)
+                except Exception:
+                    await self.telegram.notify('原卡更新尚未確認；保留原訊息，不會另發一張卡。')
+                    return True
+                candidate.competition['update_pending'] = False
+                candidate.competition['refresh_failure_streak'] = 0
+                candidate.competition['refresh_retry_after'] = ''
+                self.repository.save_refresh(candidate, expected)
                 return True
             candidate.status = Status.DISCOVERED
             candidate.card_attempts = 0
             candidate.card_retry_after = ''
             candidate.card_last_error = ''
-            self.repository.save(candidate)
+            if not self.repository.save_screen_result(candidate, previous):
+                await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                return True
             await self._deliver_card(candidate.id)
             return True
         waiting = self.repository.find_by_status([Status.QUESTIONNAIRE, Status.DRAFT_READY], limit=20)

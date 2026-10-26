@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 import json
 import re
 import html
@@ -19,7 +19,7 @@ URL = "https://sample.devpost.com/rules"
 QUOTE = ("These are the official contest terms and entry conditions. Everyone may enter. "
          "No attendance or presentation is required in any stage, including awards. "
          "Entrants retain the right to publicly display their entries. Captions must be written personally.")
-QUOTE += ' Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
+QUOTE += ' Substantial AI generation is allowed. Entry is free. Deadline 2026-12-01 23:59 UTC+08:00.'
 SOURCES = {URL: QUOTE}
 
 
@@ -65,9 +65,9 @@ def test_hard_conflicts_are_rejected(key, value):
 
 
 @pytest.mark.parametrize("key,value", [
-    ("generation_wait", 5), ("finals", 4), ("ai_share", .49), ("extra_tools_twd", 301),
+    ("ai_share", .49),
 ])
-def test_model_cannot_relax_time_share_or_tool_limits(key, value):
+def test_model_cannot_relax_ai_share_requirement(key, value):
     raw = valid_report()
     raw["estimate"][key] = value
     assert evaluate(raw, SOURCES, now=NOW)["decision"] == "rejected"
@@ -84,7 +84,7 @@ def test_uncertain_estimates_do_not_masquerade_as_confirmed_exclusions():
     raw['estimate'].update(uncertain=True, ai_share=.8, generation_wait=8, extra_tools_twd=500)
     report = evaluate(raw, SOURCES, now=NOW)
     assert report['decision'] == 'pending'
-    assert any('六小時' in reason for reason in report['blockers'])
+    assert any('不確定性' in reason for reason in report['blockers'])
     raw['facts']['attendance']['value'] = 'onsite'
     assert evaluate(raw, SOURCES, now=NOW)['decision'] == 'rejected'
 
@@ -600,3 +600,26 @@ def test_ai_production_at_or_above_half_is_accepted(share):
     report = evaluate(raw, SOURCES, now=NOW)
     assert report["decision"] == "eligible"
     assert report["estimate"]["ai_share"] == share
+
+
+@pytest.mark.parametrize('field,value', [('generation_wait', 20), ('finals', 12), ('extra_tools_twd', 5000)])
+def test_time_and_cost_over_old_caps_require_return_review_not_automatic_rejection(field, value):
+    raw = valid_report()
+    raw['estimate'][field] = value
+    report = evaluate(raw, SOURCES, now=NOW)
+    assert report['decision'] == 'eligible'
+    assert not any('六小時' in reason or 'NT$300' in reason for reason in report['blockers'])
+
+
+def test_elapsed_work_still_must_fit_before_actual_deadline():
+    raw = valid_report()
+    report = evaluate(raw, SOURCES, now=datetime(2026, 12, 1, 22, 0, tzinfo=timezone(timedelta(hours=8))))
+    assert report['decision'] == 'rejected'
+    assert '距離截止時間不足以完成預估流程' in report['blockers']
+
+
+def test_official_cash_awards_with_amounts_tba_remain_unknown_not_eligible():
+    raw=valid_report();quote='There will be cash prizes. Award amounts are TBA.'
+    raw['facts']['prize']={'value':'Cash awards TBA','quote':quote,'url':URL}
+    report=evaluate(raw,{URL:SOURCES[URL]+' '+quote},now=NOW)
+    assert report['facts']['prize']['value']=='unknown' and report['decision']=='pending'

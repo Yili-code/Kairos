@@ -47,6 +47,8 @@ def test_lost_edit_acknowledgement_retries_same_message_without_new_card():
     workflow.telegram = Telegram()
     assert run_immediate(workflow.discover(()))['card_update_errors'] == 1
     assert repo.get('sent').competition['update_pending']
+    assert run_immediate(workflow.discover(()))['card_updates_sent'] == 0
+    repo.get('sent').competition['refresh_retry_after'] = (datetime.now(UTC)-timedelta(seconds=1)).isoformat()
     assert run_immediate(workflow.discover(()))['card_updates_sent'] == 1
     assert calls == [(123, True), (123, True)]
     assert repo.get('sent').status == Status.TELEGRAM_SENT

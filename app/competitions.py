@@ -18,9 +18,12 @@ import httpx
 
 from app.models import Candidate
 from app.public_fetch import fetch_public
+from app.discovery_feeds import devpost_listing_url
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context, concrete_cash_prize
 from app.profile import PROFILE
+from app.competition_policy import COMPETITION_POLICY
+from app.economics import economic_review, money
 
 
 FACTS = {
@@ -42,6 +45,8 @@ FACTS = {
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
 TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
 MAX_RULE_DOCUMENTS = 6
+MAX_RULE_TEXT = 48_000
+MAX_TOTAL_RULE_TEXT = 192_000
 RULE_LINK = re.compile(
     r"/(?:[a-z0-9]+-)*(?:rules|regulations|terms|timeline|application|enter|faq|guidelines|judging)(?:[-/.?#]|$)",
     re.I,
@@ -49,29 +54,46 @@ RULE_LINK = re.compile(
 
 
 class PageText(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, base_url: str = '') -> None:
         super().__init__()
+        self.base_url = base_url
+        self.footer = 0
         self.hidden = 0
+        self.navigation = 0
         self.parts: list[str] = []
         self.attachments: list[str] = []
         self.rule_links: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "a":
-            href = dict(attrs).get("href") or ""
+        if tag == "nav":
+            self.navigation += 1
+        if tag == "footer":
+            self.footer += 1
+        href = dict(attrs).get("href") or ""
+        footer_rule = False
+        if tag == "a" and self.footer and self.hidden == self.footer and self.base_url and RULE_LINK.search(href):
+            try:
+                footer_rule = urlsplit(urljoin(self.base_url, href)).hostname == urlsplit(self.base_url).hostname
+            except ValueError:
+                pass
+        if tag == "a" and (not self.hidden or footer_rule):
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
             elif RULE_LINK.search(href):
                 self.rule_links.append(href)
-        if tag in {"script", "style", "noscript"}:
+        if tag in {"script", "style", "noscript", "footer"}:
             self.hidden += 1
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style", "noscript"} and self.hidden:
+        if tag == "footer" and self.footer:
+            self.footer -= 1
+        if tag == "nav" and self.navigation:
+            self.navigation -= 1
+        if tag in {"script", "style", "noscript", "footer"} and self.hidden:
             self.hidden -= 1
 
     def handle_data(self, data):
-        if not self.hidden and data.strip():
+        if not self.hidden and not self.navigation and data.strip():
             self.parts.append(data.strip())
 
 
@@ -184,7 +206,7 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
             and not parsed.username and not parsed.password
             and any(host == item or host.endswith("." + item) for item in hosts)
             and unique_query and len(parsed.query) < 500
-            and (public_navigation or public_module or public_attachment) and not parsed.fragment
+            and (public_navigation or public_module or public_attachment or devpost_listing_url(url)) and not parsed.fragment
         )
     except ValueError:
         return False
@@ -223,7 +245,7 @@ def pdf_text(body: bytes) -> str:
                 return TRUNCATED_MARKER
             parts.append(page.extract_text() or "")
             if sum(len(part) for part in parts) > 32_000:
-                return normalize(" ".join(parts))[:32_000] + "\n" + TRUNCATED_MARKER
+                return normalize(" ".join(parts))[:MAX_RULE_TEXT] + "\n" + TRUNCATED_MARKER
         return normalize(" ".join(parts))
     except Exception:
         # Malformed, encrypted or image-only documents never become positive evidence.
@@ -231,12 +253,13 @@ def pdf_text(body: bytes) -> str:
 
 
 class CompetitionScreener:
-    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0, fetcher=None) -> None:
+    def __init__(self, llm: Any, hosts: tuple[str, ...], *, transport=None, fetch_timeout=45.0, fetcher=None, exchange_reference=None) -> None:
         self.llm = llm
         self.hosts = hosts
         self.fetcher = fetcher or fetch_public
         self.transport = transport
         self.fetch_timeout = fetch_timeout
+        self.exchange_reference = exchange_reference
         self.last_report: list[dict] = []
         self._receipt_context = ContextVar('competition_fetch_receipts', default=None)
 
@@ -261,6 +284,10 @@ class CompetitionScreener:
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
             for url in pending:
+                remaining_text = MAX_TOTAL_RULE_TEXT - sum(len(page) for page in sources.values())
+                if remaining_text <= 0:
+                    receipts.append({'url': url, 'status': 'text_budget_exhausted', 'attempts': 0, 'bytes': 0})
+                    break
                 fetched = await self.fetcher(client, url, lambda target: allowed_url(target, self.hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
                            "attempts": fetched.attempts, "bytes": len(fetched.body)}
@@ -271,14 +298,18 @@ class CompetitionScreener:
                     page = pdf_text(fetched.body)
                     receipt["status"] = "ok" if page else "pdf_no_text"
                     if page:
-                        sources[fetched.url] = page
+                        limit = min(MAX_RULE_TEXT, remaining_text)
+                        sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                     continue
-                parser = PageText()
+                parser = PageText(base_url=fetched.url)
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
-                receipt["status"] = "ok" if page else "empty_text"
-                if page:
-                    sources[fetched.url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
+                dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
+                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                receipt["status"] = "dynamic_rules_unavailable" if dynamic_shell else "ok" if page else "empty_text"
+                if page and not dynamic_shell:
+                    limit = min(MAX_RULE_TEXT, remaining_text)
+                    sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
                     (i for i, name in enumerate(("rules", "regulations", "terms", "timeline", "application", "enter", "guidelines", "faq", "judging"))
                      if re.search(r"(?:/|-)" + name + r"(?:[-/.?#]|$)", href, re.I)), 99))
@@ -316,6 +347,14 @@ class CompetitionScreener:
                 "facts": {}, "sources": list(sources), "estimate": {},
                 "analysis_error": 'model_rate_limited' if 'HTTP 429' in str(exc) else 'model_failed',
             }
+        reference = None
+        if self.exchange_reference and any((money(candidate.competition.get('facts', {}).get(key, {}).get('value')) or {}).get('currency') == 'USD'
+                                           for key in ('prize', 'registration_amount')):
+            try:
+                reference = await self.exchange_reference.snapshot()
+            except Exception:
+                reference = {'status': 'exchange_reference_unavailable'}
+        candidate.competition['economics'] = economic_review(candidate.competition, reference)
         candidate.category = "ai_competition"
         context_receipts = self._receipt_context.get()
         candidate.competition["fetch_report"] = list(context_receipts if context_receipts is not None else self.last_report)
@@ -338,7 +377,7 @@ class CompetitionScreener:
         candidate.first_round_score = candidate.competition.get("rank", 40)
         if campus and candidate.competition["decision"] != "rejected":
             candidate.first_round_score += 3
-        candidate.reasons = ["獎金與公開得獎紀錄導向", "六小時完整參賽流程與 NT$300 工具預算"]
+        candidate.reasons = ["獎金與公開得獎紀錄導向", "依完整成本與預期回報評估；成功率不足時保留未知"]
         candidate.risks = candidate.competition["blockers"]
         return candidate
 
@@ -377,8 +416,35 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         }
         diagnostics[name] = 'grounded' if grounded and value != 'unknown' else 'unknown' if value == 'unknown' else 'invalid_or_unmatched_quote'
 
+    ai = facts['ai_policy']
+    if ai['value'] == 'broad_allowed':
+        quote = ai['quote']
+        # A project integrating an AI API is not a grant to generate its artifacts.
+        permission = re.search(
+            r'(?:AI|artificial intelligence)[- ]?(?:generated|assisted|creation|generation|production).{0,100}'
+            r'(?:allowed|permitted|eligible|accepted|encouraged)|'
+            r'(?:may|can|permitted|allowed|encouraged)(?:\s+to)?(?:\s+freely)?\s+(?:use|using).{0,50}(?:AI|artificial intelligence).{0,70}'
+            r'(?:creat|generat|produc|cod(?:e|ing)|writ|asset)|'
+            r'(?:must be|may be|can be|permitted to be)\s+(?:created|generated|produced).{0,50}(?:using|with).{0,30}(?:AI|artificial intelligence)|'
+            r'use any AI tools.{0,80}(?:coding|asset generation|writing)|'
+            r'(?:允許|接受|可|得).{0,35}(?:AI|人工智慧|生成式).{0,35}(?:生成|製作|創作)|'
+            r'(?:AI|人工智慧|生成式).{0,20}(?:生成|製作|創作).{0,35}(?:允許|接受|可參賽|皆可|得參賽)|'
+            r'(?:作品|圖像|影片|程式).{0,30}(?:可|允許).{0,25}(?:生成式|AI)|'
+            r'(?:運用|使用|利用|透過).{0,12}(?:生成式\s*)?AI.{0,80}(?:創作|製作|生成)', quote, re.I)
+        denial = re.search(
+            r'not (?:allowed|permitted|eligible|accepted)|(?:may|must|can) not (?:use|generate|create)|'
+            r'no AI|AI.{0,35}(?:prohibited|forbidden)|(?:prohibited|forbidden).{0,35}AI|'
+            r'(?:禁止|不得|不可|不允許).{0,20}AI|AI.{0,30}(?:禁止|不得|不可|不允許)', quote, re.I)
+        if not permission or denial:
+            facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
+            diagnostics['ai_policy'] = 'missing_explicit_ai_creation_permission'
+
+    if facts['prize']['value'] != 'unknown' and not concrete_cash_prize(facts['prize']['value']):
+        facts['prize'] = {'value': 'unknown', 'quote': '', 'url': ''}
+        diagnostics['prize'] = 'missing_concrete_cash_amount'
+
     fee = facts['registration_fee']
-    if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase (?:is )?necessary', fee['quote'], re.I):
+    if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase (?:is )?necessary|no (?:purchase or payment|payment or purchase) (?:is )?(?:necessary|required) to (?:enter|win|participate)', fee['quote'], re.I):
         facts['registration_fee'] = {'value': 'unknown', 'quote': '', 'url': ''}
         diagnostics['registration_fee'] = 'no_explicit_free_entry_statement'
     if facts['registration_fee']['value'] == 'unknown':
@@ -517,18 +583,14 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     estimate_conflicts = blockers if uncertain else rejected
     if total is None or total <= 0:
         blockers.append("完整耗時無法估算")
-    elif total > 6:
-        estimate_conflicts.append("預估完整參賽流程超過六小時" + ("，製作計畫尚待核實" if uncertain else ""))
     elif deadline and deadline.tzinfo and (deadline - now).total_seconds() < total * 3600:
         estimate_conflicts.append("距離截止時間不足以完成預估流程")
     if share is None:
         blockers.append("AI 可完成比例無法估算")
-    elif share < 0.5:
+    elif share < COMPETITION_POLICY['min_ai_production_share']:
         estimate_conflicts.append("預估 AI 可完成比例低於 50%" + ("，分工尚待核實" if uncertain else ""))
     if tools is None:
         blockers.append("額外工具費無法估算")
-    elif tools > 300:
-        estimate_conflicts.append("預估額外工具費超過 NT$300" + ("，工具計畫尚待核實" if uncertain else ""))
     if not plan or uncertain:
         blockers.append("時間／AI 分工／工具計畫仍有不確定性")
     decision = "rejected" if rejected else "pending" if blockers else "eligible"
@@ -621,7 +683,10 @@ is its own component with ai_fraction=0; never let AI draft it. Use 'none' for w
 ai_share will be recomputed as sum(weight * ai_fraction), never trusted as a standalone percentage.
 If the production division or tool availability is unknown return an empty component list and uncertain=true.
 extra_tools_twd is per-contest incremental tool expense in TWD, excluding registration fees.
-Never estimate probability of winning.
+There is no fixed six-hour or NT$300 tool-cost ceiling. Estimate the complete realistic work and expenses,
+then compare return scenarios; never shrink or inflate an estimate to fit an old ceiling.
+Do not invent a probability of winning, infer it from registration counts, or assume positive expected value.
+No personal hourly wage is established; illustrative time-value scenarios are comparisons only.
 uncertain=true if duration, quota, dependencies or finalist work cannot be bounded. Unknown numeric estimates
 are null. Estimates are estimates, never measured performance or organizer promises.
 Write plan and descriptive facts in Traditional Chinese. Enum values must use the exact English enums.

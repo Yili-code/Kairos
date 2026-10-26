@@ -42,4 +42,5 @@ def test_reviewed_official_repost_does_not_create_a_second_recommendation():
     workflow,_,telegram,_=make_workflow();workflow.announcement_source=Source();workflow.competition_screener=Screener()
     first=run_immediate(workflow.discover(()));second=run_immediate(workflow.discover(()))
     assert first['cards_sent']==1 and len(telegram.cards)==1
-    assert first['duplicate_competition_cards_suppressed']==1 and second['cards_sent']==0
+    assert first['screen_leads_created']==first['screen_attempts']==1
+    assert first['duplicate_competition_cards_suppressed']==0 and second['cards_sent']==0

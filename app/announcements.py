@@ -17,9 +17,10 @@ import httpx
 from app.competitions import allowed_url, normalize
 from app.models import Candidate
 from app.public_fetch import fetch_public
+from app.discovery_feeds import devpost_listing_url, devpost_listing, devpost_next_page
 
 
-CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|挑戰賽|contest|competition|call for entr|open call|prizes?|awards?|film festival|challenge", re.I)
+CONTEST_TITLE = re.compile(r"競賽|比賽|徵件|徵選|徵稿|文學獎|作品募集|挑戰賽|contest|competition|call for entr|open call|prizes?|awards?|film fest(?:ival)?|hackathon|(?:mega|game)\s*jam|challenge", re.I)
 SPORT_TITLE = re.compile(r"籃球|排球|羽球|桌球|棒球|足球|游泳|田徑|馬拉松|basketball|volleyball|marathon", re.I)
 NON_ENTRY_TITLE = re.compile(r"(?:期刊|學刊|季刊|學報|論叢|論衡|評論|專刊|叢刊|學誌|研究[》」]).*徵稿|學術期刊|合唱比賽|call for papers|journal submissions", re.I)
 RECAP_TITLE = re.compile(r"得獎名單|獲獎名單|競賽結果|恭賀|頒獎典禮|圓滿落幕|評審肯定|成果報導|winners? announced|award winners|award-winning|獲.{0,35}(?:挑戰賽|競賽|比賽).{0,8}獎|\d+位.{0,12}高手集結", re.I)
@@ -31,6 +32,11 @@ DISCOVERY_TIMEOUT = 60.0
 # Directory copy is a lead only; send organizer/platform links to the rules screener.
 DIRECTORY_HOSTS = {"aifilmcontests.com"}
 LOGGER = logging.getLogger(__name__)
+
+
+def generic_navigation(title: str) -> bool:
+    return bool(re.fullmatch(r"(?:交流)?競賽(?:[&／/]獎勵)?|比賽(?:徵件)?|徵件(?:資訊|訊息)?|"
+        r"(?:校內|校外)?競賽資訊|活動競賽|contests?|competitions?|awards?", title, re.I))
 
 
 def honor_recap(title: str) -> bool:
@@ -102,6 +108,11 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, o
     parser = AnnouncementLinks()
     parser.feed(body)
     links = parser.links
+    listing = devpost_listing_url(base)
+    if listing:
+        links, metadata = devpost_listing(body, base)
+        if diagnostics is not None:
+            diagnostics.update(metadata)
     # RSS/Atom are optional sources under the same bounded, public-only fetch policy.
     if body.lstrip().startswith("<?xml") or body.lstrip().startswith(("<rss", "<feed")):
         try:
@@ -109,18 +120,29 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, o
             for item in root.findall(".//item"):
                 links.append((item.findtext("link", ""), item.findtext("title", "")))
             for item in root.findall("{http://www.w3.org/2005/Atom}entry"):
-                link = item.find("{http://www.w3.org/2005/Atom}link")
+                link = next((value for value in item.findall("{http://www.w3.org/2005/Atom}link")
+                             if value.get("rel", "alternate") == "alternate"), None)
                 if link is not None:
                     links.append((link.get("href", ""), item.findtext("{http://www.w3.org/2005/Atom}title", "")))
         except ET.ParseError:
-            raise ValueError('Malformed announcement feed') from None
+            # Some official feeds append a browser challenge script after the XML root.
+            # Accept only a complete, separately valid feed followed solely by scripts;
+            # never execute or treat that trailer as event text.
+            closing = re.search(r"</(?:rss|feed)\s*>", body, re.I)
+            trailer = body[closing.end():] if closing else ""
+            if not closing or not re.fullmatch(r"(?:\s*<script\b[^>]*>(?:(?!</script>).)*</script>)+\s*", trailer, re.I | re.S):
+                raise ValueError('Malformed announcement feed') from None
+            try:
+                return entries(body[:closing.end()], base, hosts, diagnostics=diagnostics, offset=offset)
+            except ET.ParseError:
+                raise ValueError('Malformed announcement feed') from None
     counts = Counter()
     contest_titles = 0
     found = {}
     for href, title in links:
         # A generic call may accept proposals, data or software without naming an artifact.
         # Discovery is deliberately broad; official rules still determine eligibility.
-        if not CONTEST_TITLE.search(title):
+        if not listing and not CONTEST_TITLE.search(title):
             continue
         contest_titles += 1
         if title.lower().startswith('image source:'):
@@ -151,7 +173,7 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, o
         ):
             counts['directory_navigation'] += 1
             continue
-        if re.fullmatch(r"(?:交流)?競賽(?:[&／/]獎勵)?|比賽|徵件|contests?|competitions?|awards?", title, re.I):
+        if generic_navigation(title):
             counts['generic_navigation'] += 1
             continue
         if url.rstrip("/") == base.rstrip("/") or href.startswith("#"):
@@ -224,21 +246,25 @@ class AnnouncementSource:
                                 visited.add(current)
                                 page = await self.fetcher(client, current, lambda target: allowed_url(target, self.hosts))
                                 status = 'unsupported_content' if page.status == 'ok' and 'application/pdf' in page.content_type else page.status
-                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts, "from_cache": page.from_cache, "retry_at": page.retry_at}
+                                receipt = {"url": current, "board": base, "status": status, "attempts": page.attempts, "from_cache": page.from_cache, "retry_at": page.retry_at,
+                                           "content_type": page.content_type, "bytes": len(page.body),
+                                           "body_sha256": hashlib.sha256(page.body).hexdigest()}
                                 receipts.append(receipt)
                                 if status != 'ok':
                                     break
                                 details = {}
                                 try:
                                     leads = entries(page.text(), page.url, self.hosts, diagnostics=details, offset=(int(time.time()) // 3600) * 20)
-                                except (ValueError, AssertionError):
+                                except (ValueError, AssertionError) as exc:
                                     receipt['status'] = 'parse_error'
+                                    receipt['parse_error_type'] = type(exc).__name__
                                     break
                                 receipt.update(details)
                                 receipt.update(resolved_url=page.url, leads=len(leads))
                                 for candidate in leads:
                                     rows.setdefault(candidate.permalink, candidate)
-                                current = next_listing(page.text(), page.url, self.hosts)
+                                current = (devpost_next_page(page.text(), page.url, int(time.time()) // 3600)
+                                           if devpost_listing_url(page.url) else next_listing(page.text(), page.url, self.hosts))
                                 if not current:
                                     break
                 except TimeoutError:

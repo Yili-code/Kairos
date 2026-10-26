@@ -86,7 +86,7 @@ def test_manual_incomplete_review_stays_background_and_does_not_rearm_failed_bud
     assert run_immediate(workflow.handle_text('/competition ' + URL))
     assert telegram.cards == []
     assert repo.get(key).status == Status.COMPETITION_PENDING_SCREEN
-    assert repo.get(key).screen_failure_streak == 3
+    assert repo.get(key).screen_failure_streak == 4
     assert telegram.notifications == ['資料不足，已留待補查：現金獎金、有效截止時間、交付內容、AI 規則、完整投入估算']
     assert run_immediate(workflow._deliver_card(key)) == 'incomplete'
     assert repo.get(key).card_attempts == 0
@@ -140,3 +140,9 @@ def test_legacy_incomplete_queued_edit_is_deferred_and_bounded_without_provider_
     assert saved.competition['refresh_incomplete_attempts'] == 3
     assert saved.competition['update_pending'] is True
     assert saved.status == Status.TELEGRAM_SENT
+
+
+@pytest.mark.parametrize('value', ['Cash awards TBA', '現金獎金待公告', 'USD 0', '2026 cash awards'])
+def test_unannounced_or_zero_awards_do_not_pass_the_information_gate(value):
+    report=complete();report['facts']['prize']['value']=value
+    assert '現金獎金' in competition_card_gaps(report)

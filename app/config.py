@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from app.discovery_feeds import DEVPOST_LIST
 
 DEFAULT_COMPETITION_TERMS = (
     "AI competition", "online contest", "AI film competition", "design competition",
@@ -16,7 +17,7 @@ DEFAULT_RULES_HOSTS = (
     "aifilmcontests.com", "filmfreeway.com", "curiousrefuge.com", "chromaawards.com",
     "ai-zone.net", "akool.com", "1billionsummit.com", "showrunnerstudio.com",
     "postmeaning.art",
-    "graphiccompetitions.com",
+    "graphiccompetitions.com", "unrealengine.com", "itch.io", "cuefilmfest.com", "svaiff.com",
 )
 DEFAULT_ANNOUNCEMENT_URLS = (
     "https://hac.kmu.edu.tw/index.php/zh-tw/notice", "https://aifilmcontests.com/",
@@ -31,6 +32,7 @@ DEFAULT_ANNOUNCEMENT_URLS = (
     "https://academic.site.nthu.edu.tw/p/403-1007-1504-1.php?Lang=zh-tw",
     "https://www.youth.ntpc.gov.tw/youth/ch/app/news/list?module=headnews&id=104",
     "https://youth.kcg.gov.tw/", "https://graphiccompetitions.com/",
+    DEVPOST_LIST, "https://www.unrealengine.com/en-US/rss", "https://itch.io/jams",
 )
 
 # Curated related sources; no facts or inferred permissions are embedded here.

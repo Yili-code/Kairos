@@ -10,13 +10,30 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
+from app.competition_policy import COMPETITION_POLICY
 
 
 UNKNOWN = {'value': 'unknown', 'quote': '', 'url': ''}
 TAIPEI = timezone(timedelta(hours=8))
 MONTHS = {name.lower(): number for number in range(1,13)
           for name in (calendar.month_name[number], calendar.month_abbr[number])}
-CLOSING = re.compile(r'截止|期限|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
+MONTHS['sept'] = 9
+CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
+
+
+def concrete_cash_prize(value):
+    if not isinstance(value, str) or re.search(r'\b(?:TBA|TBD|unknown|undetermined)\b|待(?:公[布佈]|公告|確認)|未(?:公[布佈]|公告|確認|定)|另行公[布佈]', value, re.I):
+        return False
+    currency = r'NT\$|US\$|[$€£¥₹₩]|USD|TWD|NTD|AUD|CAD|EUR|GBP|JPY|KRW|CNY|SGD|HKD|新[臺台]幣|美元|韓元|歐元|日圓|人民幣|元'
+    number = r'(\d[\d,]*(?:\.\d+)?)'
+    for match in re.finditer(rf'(?:{currency})\s*{number}|{number}\s*[萬万千百億]?\s*(?:{currency})', value, re.I):
+        try:
+            amount = float((match[1] or match[2]).replace(',', ''))
+            if math.isfinite(amount) and amount > 0:
+                return True
+        except (ValueError, OverflowError):
+            pass
+    return bool(re.search(r'(?:新[臺台]幣|美元|韓元|歐元|日圓|人民幣)[一二三四五六七八九十百千萬億]+元', value))
 
 
 def competition_card_gaps(report, *, now=None):
@@ -27,7 +44,8 @@ def competition_card_gaps(report, *, now=None):
         fact = facts.get(key, {})
         return bool(isinstance(fact.get('value'), str) and fact['value'] not in {'', 'unknown'} and fact.get('quote')
                     and fact.get('url') in sources)
-    if not grounded('prize') or not grounded('prize_kind') or facts['prize_kind']['value'] != 'cash':
+    if (not grounded('prize') or not concrete_cash_prize(facts.get('prize', {}).get('value'))
+            or not grounded('prize_kind') or facts['prize_kind']['value'] != 'cash'):
         missing.append('現金獎金')
     try:
         closing = datetime.fromisoformat(facts.get('deadline', {}).get('value', '').replace('Z', '+00:00'))
@@ -53,7 +71,7 @@ def competition_card_gaps(report, *, now=None):
 
 
 def evaluation_context(profile):
-    return hashlib.sha256(json.dumps({'profile': profile, 'policy': 'ai50-hours6-tools300-v1'},
+    return hashlib.sha256(json.dumps({'profile': profile, 'policy': COMPETITION_POLICY},
                                      sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -102,11 +120,11 @@ def _calendar_date(text, page):
         except ValueError:
             return None
     months = '|'.join(sorted(MONTHS,key=len,reverse=True))
-    match = re.search(rf'\b(\d{{1,2}})\s+({months})\s+(20\d{{2}})\b',text,re.I)
+    match = re.search(rf'\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({months})\s+(20\d{{2}})\b',text,re.I)
     if match:
         day, month, year = match.groups()
     else:
-        match = re.search(rf'\b({months})\s+(\d{{1,2}}),?\s+(20\d{{2}})\b',text,re.I)
+        match = re.search(rf'\b({months})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(20\d{{2}})\b',text,re.I)
         if not match:
             return None
         month, day, year = match.groups()
@@ -123,9 +141,9 @@ def _clock(text):
         return None
     hour, minute = (int(match[1]),int(match[2])) if match[1] else (int(match[3]),0)
     local = text[max(0,match.start()-8):match.end()+5]
-    if re.search(r'下午|晚上|\bpm\b',local,re.I) and hour<12:
+    if re.search(r'下午|晚上|(?<![A-Za-z])pm\b',local,re.I) and hour<12:
         hour += 12
-    elif re.search(r'上午|\bam\b',local,re.I) and hour==12:
+    elif re.search(r'上午|(?<![A-Za-z])am\b',local,re.I) and hour==12:
         hour = 0
     return (hour,minute)
 
@@ -138,7 +156,7 @@ def _zone(text):
     if offset:
         minutes = int(offset[2])*60 + int(offset[3] or 0)
         return timezone(timedelta(minutes=minutes*(1 if offset[1]=='+' else -1))), False
-    for name,hours in {'AEDT':11,'AEST':10,'PDT':-7,'PST':-8,'EDT':-4,'EST':-5}.items():
+    for name,hours in {'AEDT':11,'AEST':10,'PDT':-7,'PST':-8,'EDT':-4,'EST':-5,'KST':9,'JST':9}.items():
         if re.search(r'\b'+name+r'\b',text):
             return timezone(timedelta(hours=hours)),False
     if re.search(r'\b(?:UTC|GMT)\b',text):
@@ -150,10 +168,23 @@ def resolve_deadline(fact, sources):
     """Merge matching date evidence; explicit precision always outranks defaults."""
     candidates = []
     for url,page in sources.items():
+        # Some timeline cards put each date before its label. Preserve that literal
+        # span instead of borrowing the following winner-announcement date.
+        month_names = '|'.join(sorted(MONTHS, key=len, reverse=True))
+        english_date = rf'(?:{month_names})\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+20\d{{2}}'
+        timeline = re.compile(rf'{english_date}\s+(?:challenge|entries|submissions)\s+opens?\s+'
+            rf'(?P<closing>{english_date})(?:\s+now open)?\s+(?P<label>(?:submissions?|entries)\s+close)\s+'
+            rf'{english_date}\s+winners?\s+announced', re.I)
+        paired = {match.start('label'): page[match.start('closing'):match.end('label')]
+                  for match in timeline.finditer(page)}
+        suffix = re.compile(r'(?P<closing>(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?)\s*(?P<label>截止)', re.I)
+        for match in suffix.finditer(page):
+            if not re.match(r'.{0,8}(?:延長|延期|展延|改為|調整)', page[match.end():match.end()+16]):
+                paired[match.start('label')] = page[match.start('closing'):match.end('label')]
         starts = [m.start() for m in CLOSING.finditer(page)]
         starts += [m.start() for m in re.finditer(r'(?:\d{3,4}[年/.-])?\d{1,2}[月/.-]\d{1,2}日?[^。；\n]{0,16}截止',page)]
         for start in starts:
-            span = re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
+            span = paired.get(start) or re.split(r'[。；\n]',page[start:start+180],maxsplit=1)[0]
             date = _calendar_date(span,page)
             if date:
                 candidates.append((date,_clock(span),span,url))
@@ -204,14 +235,17 @@ def validate_eligibility(fact, profile):
     return fact,None
 
 
-def recommendation_identity(candidate):
+def canonical_contest_url(url):
     from app.config import DEFAULT_COMPETITION_COMPANIONS
-    permalink = candidate.permalink
-    # Only reviewed explicit aliases are merged; similar titles do not prove identity.
     for primary, companions in DEFAULT_COMPETITION_COMPANIONS.items():
-        if permalink in companions:
-            permalink = primary
-            break
+        if url in companions:
+            return primary
+    return url
+
+
+def recommendation_identity(candidate):
+    # Only reviewed explicit aliases are merged; similar titles do not prove identity.
+    permalink = canonical_contest_url(candidate.permalink)
     try:
         parsed = urlsplit(str(httpx.URL(permalink)))
         url = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,urlencode(sorted(parse_qsl(parsed.query))),''))

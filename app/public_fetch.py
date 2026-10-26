@@ -10,6 +10,8 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 import httpx
+from app.discovery_feeds import devpost_listing_url
+from app.economics import CBC_URL
 
 
 class MetaRefresh(HTMLParser):
@@ -91,7 +93,8 @@ async def fetch_public(client: httpx.AsyncClient, url: str, allowed, *, limit=1_
                     if response.status_code != 200:
                         return PublicPage(current, f"http_{response.status_code}", attempts=attempts)
                     kind = response.headers.get("content-type", "").lower()
-                    if not any(item in kind for item in ("html", "xml", "rss", "atom", "application/pdf")):
+                    if not (any(item in kind for item in ("html", "xml", "rss", "atom", "application/pdf"))
+                            or ("application/json" in kind and (devpost_listing_url(current) or current == CBC_URL))):
                         return PublicPage(current, "unsupported_content", attempts=attempts)
                     body = bytearray()
                     effective_limit = pdf_limit if "application/pdf" in kind else limit

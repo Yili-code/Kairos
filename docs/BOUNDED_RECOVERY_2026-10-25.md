@@ -25,3 +25,35 @@ Regression tests reproduce owner skips during both model work and Telegram editi
 - The next actual business schedule is 2026-10-26 00:00 Asia/Taipei. At this checkpoint there is no scheduled-run evidence for the new revision. Multiple actual rounds, sustainable queue progress, recovery of the two HTTP 403 sources, and a real eligible notification remain unverified. Existing finite acceptance tracking must continue; these repairs are not final acceptance.
 
 Pull request: https://github.com/Yili-code/Kairos/pull/1. Automatic approval review rejected direct promotion to `main`; source remains on `codex/kairos-bounded-recovery` pending explicit merge approval. Production deployment was separately authorized and verified.
+
+## New-candidate starvation repair (2026-10-26)
+
+Discovery now persists the entire bounded announcement batch before allocating screening work. With more than one configured model slot, one newly created candidate gets an early attempt, then the existing queue keeps its original last-attempt order. Software/hackathon titles use the already declared profile priority only for this fresh turn; they do not establish qualifications or tool proficiency. Existing curated entries retain precedence over generic AI titles. A one-slot configuration keeps old work first.
+
+A regression with eight old candidates and five fresh software leads confirms that the fresh candidate and two old candidates are evaluated within the same three-model ceiling, while all five fresh candidates are retained. A separate refresh/new/backlog test confirms all three share that same ceiling. Repeated listing results do not receive another fresh turn; source failures do not prevent healthy old work. This does not prove sufficient throughput for arbitrary arrival rates; production arrivals, departures, paused identities and ages must still be observed over real rounds.
+
+## Historical-card failure and interruption budget (2026-10-26)
+
+Previously only incomplete-result refreshes had a finite budget. A provider exception or interrupted refresh could retry every later eligible run indefinitely. Each refresh now persists a consecutive-attempt counter and four-hour cooldown through the existing snapshot-checked transaction before any model/edit I/O. Three incomplete, failed or interrupted attempts pause the card; a completed same-message edit clears the consecutive budget. Owner decisions and newer assessments still win over a stale attempt.
+
+A failed review retains the prior facts and Telegram receipt while recording the new fetch/fact diagnostics separately. Provider exception text is never persisted. A lost edit acknowledgement retains update_pending and can reconcile only by editing the same existing message, with the persisted backoff and cap; it never sends a replacement message. Unknown new-message delivery remains excluded from automatic retries. Paused refreshes are counted separately in scan receipts, status, and read-only acceptance audits. Tests inject provider exceptions, cancellation before completion, unknown edit acknowledgements, cooldowns, successful recovery and owner races.
+
+## Manual rechecks retain the existing card
+
+An explicit `/competition URL` recheck of a previously delivered contest now edits its original message using snapshot guards. It no longer resets delivery attempts or creates a new opportunity card. Unknown edit acknowledgements retain the same message ID and a durable, bounded pending edit. Concurrent owner changes win for complete, incomplete and rejected reviews. This is distinct from a separately authorized manual resend request.
+
+## Shared screening ownership and result snapshots
+
+Scheduled and explicit manual reviews of unsent candidates now use the same durable screening claim. An explicit owner review may retry paused work, but cannot overlap an active ten-minute claim. Its attempt is recorded in the same historical counters; unsuccessful manual work never rearms the automatic three-failure budget. Unexpected manual provider failures retain the candidate and a four-hour cooldown without emitting an opportunity card.
+
+After provider I/O, results are written only if the complete claimed snapshot still matches. An old scheduled result cannot erase a newer Telegram receipt, owner answers or assessment, even with identical timestamps. Only assessment/status and retry fields may change; delivery receipts and owner fields remain outside this patch. Regression tests exercise both overlap directions and stale-result conflicts. Real Firestore transaction evidence must be captured separately from these in-memory tests.
+
+## Paused-case recovery visibility
+
+The authenticated status response now identifies up to ten paused candidate/card reviews with their source URL, missing-data summary and fetch statuses. The existing Telegram `/status` view shows at most two activities with explicit `/competition URL` recheck actions. Reading status does not change candidates, consume a model call, restart retries or contact anyone. Rechecking is an explicit owner action, not automatic approval or outreach.
+
+A retained, never-attempted software/hackathon lead can also take the priority turn on later rounds. The actual manually found PayPal lead was still unattempted after the discovery release; it must not lose its profile-based priority simply because it was stored before this run. This uses the existing declared opportunity priorities, not inferred tool expertise or relaxed competition requirements. The remainder still follows oldest-attempt order under the same three-model ceiling.
+
+## Reviewed aliases are resolved before screening
+
+The calligraphy event existed both under its curated primary source and its explicitly reviewed campus companion URL. Notification-time identity matching alone did not prevent a second queued assessment or a manual duplicate. Both automatic ingestion and `/competition` lookup now resolve the existing reviewed alias mapping before choosing a candidate ID. Similar titles and unreviewed domains are never merged. Historical duplicate queue records require a version-guarded archival repair; this cleanup is not counted as completed qualification work.

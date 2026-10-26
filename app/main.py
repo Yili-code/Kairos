@@ -8,6 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from app.config import Settings, DEFAULT_COMPETITION_SEEDS
 from app.competitions import CompetitionScreener
 from app.announcements import AnnouncementSource
+from app.economics import ExchangeReference
 from app.fetch_policy import PublicFetcher, FirestoreFetchState
 from app.dm_sender import DisabledDMSender, ThreadsBrowserSender
 from app.llm import GeminiClient
@@ -46,7 +47,7 @@ def build_workflow(settings: Settings) -> Workflow:
         shortlist_threshold=settings.shortlist_threshold,
         per_term_limit=settings.discovery_limit_per_term,
         max_cards=settings.telegram_max_cards_per_run,
-        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts, fetcher=fetcher.fresh),
+        competition_screener=CompetitionScreener(llm, settings.competition_rules_hosts, fetcher=fetcher.fresh, exchange_reference=ExchangeReference(fetcher)),
         competition_screen_limit=settings.competition_screen_limit,
         announcement_source=AnnouncementSource(settings.announcement_source_urls, settings.competition_rules_hosts,
                                                seed_pages=DEFAULT_COMPETITION_SEEDS if settings.announcement_source_urls else (), fetcher=fetcher),
@@ -96,6 +97,19 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             state['screen_attention'] = [{'id': row.id, 'url': row.permalink,
                 'attempts': row.screen_failure_streak, 'last_assessment': row.competition.get('checked_at'),
                 'analysis_error': row.competition.get('analysis_error')} for row in attention[:10]]
+            review_rows = attention + [row for row in rows if row.status == 'telegram_sent'
+                and (row.competition.get('refresh_failure_streak', 0) >= 3
+                     or row.competition.get('refresh_incomplete_attempts', 0) >= 3)]
+            state['review_needed'] = [{'id': row.id, 'title': row.text.splitlines()[0][:80] if row.text else row.id,
+                'url': row.permalink,
+                'reason': '來源或模型查核未完成' if row.competition.get('analysis_error') else '必要規則或投入估算仍未確認',
+                'information_gaps': row.competition.get('information_gaps', []),
+                'source_statuses': sorted({item.get('status', 'unknown') for item in
+                    (row.competition.get('last_refresh_diagnostics') or row.competition).get('fetch_report', [])
+                    if item.get('status') != 'ok'})} for row in review_rows[:10]]
+            state['card_refresh_attention_remaining'] = sum(row.status == 'telegram_sent'
+                and (row.competition.get('refresh_failure_streak', 0) >= 3
+                     or row.competition.get('refresh_incomplete_attempts', 0) >= 3) for row in rows)
             state['stale_sent_assessments'] = sum(row.status == 'telegram_sent' and row.category == 'ai_competition'
                 and (not assessment_current(row.competition, PROFILE) or bool(row.competition.get('information_gaps'))) for row in rows)
         return state

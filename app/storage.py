@@ -39,6 +39,23 @@ def screen_claimable(candidate: Candidate) -> bool:
         return False
 
 
+def manual_screen_claimable(candidate: Candidate) -> bool:
+    # An explicit owner review may retry paused work, but never overlap a live claim.
+    if candidate.status in {'competition_pending_screen', 'discovered', 'skipped', 'telegram_failed'}:
+        return True
+    if candidate.status != 'competition_screening':
+        return False
+    try:
+        updated = datetime.fromisoformat(candidate.updated_at)
+        return bool(updated.tzinfo and updated < datetime.now(UTC) - timedelta(minutes=10))
+    except (ValueError, TypeError):
+        return False
+
+
+SCREEN_RESULT_FIELDS = ('competition', 'first_round_score', 'reasons', 'risks', 'status',
+                        'screen_failure_streak', 'card_attempts', 'card_retry_after', 'card_last_error')
+
+
 class Repository(Protocol):
     def get(self, candidate_id: str) -> Candidate | None: ...
     def save(self, candidate: Candidate) -> None: ...
@@ -46,9 +63,10 @@ class Repository(Protocol):
     def find_by_status(self, statuses: Iterable[str], limit: int | None = 50) -> list[Candidate]: ...
     def claim_for_send(self, candidate_id: str, draft_hash: str, attempt_id: str) -> Candidate | None: ...
     def claim_for_card(self, candidate_id: str) -> Candidate | None: ...
-    def claim_for_screen(self, candidate_id: str) -> Candidate | None: ...
+    def claim_for_screen(self, candidate_id: str, *, manual: bool = False) -> Candidate | None: ...
     def finish_card(self, candidate_id: str, attempt_id: str, status: str, **fields) -> bool: ...
     def save_refresh(self, candidate: Candidate, expected: dict) -> bool: ...
+    def save_screen_result(self, candidate: Candidate, expected: dict) -> bool: ...
 
 
 class InMemoryRepository:
@@ -74,6 +92,18 @@ class InMemoryRepository:
             return False
         from copy import deepcopy
         for field in ('competition', 'first_round_score', 'reasons', 'risks'):
+            setattr(current, field, deepcopy(getattr(candidate, field)))
+        self.save(current)
+        candidate.updated_at = current.updated_at
+        return True
+
+    def save_screen_result(self, candidate: Candidate, expected: dict) -> bool:
+        from copy import deepcopy
+        current = self.get(candidate.id)
+        if (not current or current.status != 'competition_screening'
+                or current.to_dict() != expected):
+            return False
+        for field in SCREEN_RESULT_FIELDS:
             setattr(current, field, deepcopy(getattr(candidate, field)))
         self.save(current)
         candidate.updated_at = current.updated_at
@@ -113,9 +143,9 @@ class InMemoryRepository:
         self.save(candidate)
         return True
 
-    def claim_for_screen(self, candidate_id: str) -> Candidate | None:
+    def claim_for_screen(self, candidate_id: str, *, manual: bool = False) -> Candidate | None:
         candidate = self.get(candidate_id)
-        if not candidate or not screen_claimable(candidate):
+        if not candidate or not (manual_screen_claimable(candidate) if manual else screen_claimable(candidate)):
             return None
         candidate.status = "competition_screening"
         candidate.screen_attempts += 1
@@ -156,6 +186,25 @@ class FirestoreRepository:
             })
             return stamp
 
+        stamp = update(self.client.transaction())
+        if stamp is None:
+            return False
+        candidate.updated_at = stamp
+        return True
+
+    def save_screen_result(self, candidate: Candidate, expected: dict) -> bool:
+        from google.cloud import firestore
+        reference = self.collection.document(candidate.id)
+        @firestore.transactional
+        def update(transaction):
+            snapshot = reference.get(transaction=transaction, timeout=5, retry=None)
+            row = snapshot.to_dict() if snapshot.exists else {}
+            if row.get('status') != 'competition_screening' or Candidate.from_dict(row).to_dict() != expected:
+                return None
+            stamp = datetime.now(UTC).isoformat()
+            transaction.update(reference, {
+                **{field: getattr(candidate, field) for field in SCREEN_RESULT_FIELDS}, 'updated_at': stamp})
+            return stamp
         stamp = update(self.client.transaction())
         if stamp is None:
             return False
@@ -216,7 +265,7 @@ class FirestoreRepository:
             return True
         return finish(self.client.transaction())
 
-    def claim_for_screen(self, candidate_id: str) -> Candidate | None:
+    def claim_for_screen(self, candidate_id: str, *, manual: bool = False) -> Candidate | None:
         from google.cloud import firestore
 
         reference = self.collection.document(candidate_id)
@@ -227,7 +276,7 @@ class FirestoreRepository:
             if not snapshot.exists:
                 return None
             candidate = Candidate.from_dict(snapshot.to_dict())
-            if not screen_claimable(candidate):
+            if not (manual_screen_claimable(candidate) if manual else screen_claimable(candidate)):
                 return None
             candidate.status = "competition_screening"
             candidate.screen_attempts += 1

@@ -56,6 +56,9 @@ def queue_summary(rows, *, now=None):
             for receipt in row.get('competition', {}).get('fetch_report', []))),
         'delivered': len(notifications),
         'delivered_missing_receipt': [row['id'] for row in notifications if not row.get('telegram_message_id')],
+        'card_refresh_attention_ids': [row['id'] for row in notifications
+            if row.get('competition', {}).get('refresh_failure_streak', 0) >= 3
+            or row.get('competition', {}).get('refresh_incomplete_attempts', 0) >= 3],
         'pending_card_updates': sum(bool(row.get('competition', {}).get('update_pending')) for row in notifications),
         # These are candidates for verification, not proof of the original delivery content.
         'eligible_delivered_candidates': [row['id'] for row in notifications
