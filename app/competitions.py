@@ -105,7 +105,7 @@ class PageText(HTMLParser):
             self.recent_text = ""
         if tag == "a" and self.anchor is not None:
             href, label = self.anchor
-            if (OFFICIAL_LINK_LABEL.fullmatch(" ".join(label.split()))
+            if (OFFICIAL_LINK_LABEL.fullmatch(" ".join(label.split()).rstrip("↗→›»\ufe0e\ufe0f "))
                     or (self.anchor_official_context and label.strip() == href)):
                 if len(self.official_links) < MAX_RULE_DOCUMENTS:
                     self.official_links.append(href)

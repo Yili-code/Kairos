@@ -118,3 +118,9 @@ def test_directory_official_pdf_handoff_remains_readable(monkeypatch):
         assert result.competition["decision"] == "eligible"
         assert result.competition["fetch_report"][-1]["required_for_rules"]
     asyncio.run(check())
+
+
+def test_actual_graphic_competitions_official_label_retains_decorative_arrow():
+    parser = PageText(base_url="https://graphiccompetitions.com/example/")
+    parser.feed('<a href="https://www.klphotoawards.com">Visit official website<span>↗</span></a>')
+    assert parser.official_links == ["https://www.klphotoawards.com"]
