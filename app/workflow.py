@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.dm_sender import DMUnavailable, DMSenderError
-from app.competitions import allowed_url, rules_urls, CompetitionScreener
+from app.competitions import allowed_url, rules_urls, CompetitionScreener, verification_origin
 from app.competition_decisions import recommendation_identity, assessment_current, competition_card_gaps, canonical_contest_url
 from app.profile import PROFILE
 from app.llm import GeminiClient
@@ -161,7 +161,7 @@ class Workflow:
                         or competition_attempts >= self.competition_screen_limit * 3
                         or time.monotonic() > deadline - 90):
                     return
-                origin = urlsplit(urls[0] if urls else candidate.permalink).netloc.lower()
+                origin = verification_origin(urls[0] if urls else candidate.permalink)
                 if origin_denials.get(origin, 0) >= 2:
                     origin_deferred_ids.add(candidate.id)
                     return
@@ -214,7 +214,7 @@ class Workflow:
                     for receipt in candidate.competition.get('fetch_report', [])
                     if receipt.get('status') in {'http_403', 'http_429'}}
                 if (not has_sources or verification_error) and any(receipt.get('status') in {
-                        'official_link_missing', 'official_link_not_allowed', 'event_specific_rules_required', 'dynamic_rules_unavailable',
+                        'official_link_missing', 'official_link_not_allowed', 'event_specific_rules_required', 'dynamic_rules_unavailable', 'event_scope_changed',
                         'too_large', 'unsupported', 'redirect_blocked'}
                         for receipt in candidate.competition.get('fetch_report', [])):
                     denied_origins.add(origin)

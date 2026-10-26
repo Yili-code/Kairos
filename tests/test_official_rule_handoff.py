@@ -143,3 +143,52 @@ def test_actual_mixed_event_catalogue_cannot_supply_a_different_contests_prize()
         single = await screener.sources('https://curiousrefuge.com/ai-film-trailer-competition')
         assert single
     asyncio.run(check())
+
+
+def test_reviewed_existing_candidate_gets_scoped_rules_despite_directory_failure(monkeypatch):
+    from app import competitions
+    official = next(iter(SOURCES))
+    monkeypatch.setattr(competitions, 'VERIFIED_RULE_COMPANIONS', {DIRECTORY: ((official, 'AI'),)})
+    class Model:
+        calls = 0
+        async def screen_competition(self, candidate, sources):
+            self.calls += 1
+            return valid_report()
+    def handler(request):
+        return httpx.Response(403 if str(request.url) == DIRECTORY else 200,
+            headers={'content-type': 'text/html'}, text=next(iter(SOURCES.values())))
+    async def check():
+        model = Model()
+        screener = CompetitionScreener(model, ('contestwatchers.com',), transport=httpx.MockTransport(handler))
+        result = await screener.screen(row())
+        assert result.competition['decision'] == 'eligible'
+        assert model.calls == 1
+        assert screener.hosts == ('contestwatchers.com',)
+        assert competitions.verification_origin(DIRECTORY) == 'sample.devpost.com'
+    asyncio.run(check())
+
+
+def test_reviewed_rules_edition_mismatch_blocks_model(monkeypatch):
+    from app import competitions
+    official = next(iter(SOURCES))
+    monkeypatch.setattr(competitions, 'VERIFIED_RULE_COMPANIONS', {DIRECTORY: ((official, 'Specific edition absent'),)})
+    class Model:
+        async def screen_competition(self, *args):
+            raise AssertionError('Wrong edition must not be assessed')
+    def handler(request):
+        return httpx.Response(200, headers={'content-type': 'text/html'}, text=next(iter(SOURCES.values())))
+    async def check():
+        result = await CompetitionScreener(Model(), ('contestwatchers.com',), transport=httpx.MockTransport(handler)).screen(row())
+        assert result.competition['decision'] == 'pending'
+        assert any(r['status'] == 'event_scope_changed' for r in result.competition['fetch_report'])
+    asyncio.run(check())
+
+
+def test_ban_on_fully_ai_work_does_not_establish_ban_on_partial_ai():
+    from app.competitions import evaluate
+    url = 'https://chicagolatinofilmfestival.org/poster-contest-2'
+    quote = 'Fully AI-produced works will not be considered.'
+    for value in ('limited', 'prohibited'):
+        result = evaluate({'facts': {'ai_policy': {'value': value, 'quote': quote, 'url': url}}}, {url: quote})
+        assert result['facts']['ai_policy']['value'] == 'unknown'
+        assert result['decision'] == 'pending'

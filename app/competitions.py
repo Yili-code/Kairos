@@ -54,6 +54,20 @@ RULE_LINK = re.compile(
 
 
 DIRECTORY_RULE_HOSTS = {"contestwatchers.com", "www.contestwatchers.com", "graphiccompetitions.com", "www.graphiccompetitions.com", "aifilmcontests.com", "www.aifilmcontests.com"}
+# Reviewed rules for existing candidates; discovery never consumes this table.
+VERIFIED_RULE_COMPANIONS = {
+ "https://www.contestwatchers.com/photora-awards-2026-photography-competition/": (("https://photoraawards.com/", "2026"), ("https://photoraawards.com/faq/", "Photora")),
+ "https://www.contestwatchers.com/global-sustainability-challenge-2026-27/": (("https://www.globalsustainabilitychallenge.org/challenge-details/", "2026"), ("https://www.globalsustainabilitychallenge.org/faqs/", "Challenge")),
+ "https://graphiccompetitions.com/photography/klpa-autoportrait-2026-portrait-photography-prize-play/": (("https://www.klphotoawards.com/rules", "AUTOPORTRAIT"),),
+ "https://graphiccompetitions.com/graphic-design/43rd-chicago-latino-film-festival-poster-contest-2027/": (("https://chicagolatinofilmfestival.org/poster-contest-2", "43rd Chicago Latino Film Festival"),),
+}
+
+
+def verification_origin(url: str) -> str:
+    handoffs = VERIFIED_RULE_COMPANIONS.get(url, ())
+    return urlsplit(handoffs[0][0] if handoffs else url).netloc.lower()
+
+
 OFFICIAL_LINK_LABEL = re.compile(r"^(?:visit\s+)?official\s+(?:website|rules|competition\s+(?:website|page))$|^(?:比賽|競賽|活動)?(?:官方網站|官網)$|^(?:完整|比賽|競賽|徵件)簡章$", re.I)
 
 
@@ -310,10 +324,14 @@ class CompetitionScreener:
 
     async def _read_sources(self, text: str, sources: dict[str, str], receipts: list[dict]) -> None:
         pending = rules_urls(text, self.hosts)
-        required_official: set[str] = set()
+        scoped = {url: marker for primary in pending for url, marker in VERIFIED_RULE_COMPANIONS.get(primary, ())}
+        reviewed_parents = {url for url in pending if url in VERIFIED_RULE_COMPANIONS}
+        hosts = tuple(self.hosts) + tuple({urlsplit(url).hostname for url in scoped})
+        required_official: set[str] = set(scoped)
+        pending.extend(url for url in scoped if url not in pending)
         for url in list(pending):
             for companion in DEFAULT_COMPETITION_COMPANIONS.get(url, ()):
-                if allowed_url(companion, self.hosts) and companion not in pending:
+                if allowed_url(companion, hosts) and companion not in pending:
                     pending.append(companion)
         async with httpx.AsyncClient(
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
@@ -323,11 +341,13 @@ class CompetitionScreener:
                 if remaining_text <= 0:
                     receipts.append({'url': url, 'status': 'text_budget_exhausted', 'attempts': 0, 'bytes': 0})
                     break
-                fetched = await self.fetcher(client, url, lambda target: allowed_url(target, self.hosts))
+                fetched = await self.fetcher(client, url, lambda target: allowed_url(target, hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
                            "attempts": fetched.attempts, "bytes": len(fetched.body)}
                 if url in required_official:
                     receipt["required_for_rules"] = True
+                if url in reviewed_parents:
+                    receipt['role'] = 'discovery_only'
                 receipts.append(receipt)
                 if fetched.status != "ok":
                     continue
@@ -347,6 +367,9 @@ class CompetitionScreener:
                 page = normalize(" ".join(parser.parts))
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
                     and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next|__nuxt|core-mount-point|theme-mount-point|bh-root)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                if url in scoped and scoped[url].casefold() not in page.casefold():
+                    receipt['status'] = 'event_scope_changed'
+                    continue
                 receipt["status"] = "dynamic_rules_unavailable" if dynamic_shell else "ok" if page else "empty_text"
                 directory = urlsplit(fetched.url).hostname in DIRECTORY_RULE_HOSTS
                 if directory:
@@ -361,6 +384,8 @@ class CompetitionScreener:
                     if urlsplit(urljoin(fetched.url, href)).hostname not in DIRECTORY_RULE_HOSTS]
                 links = (parser.attachments + parser.official_links + external_rule_links if directory
                     else parser.attachments + parser.official_links + rule_links)
+                if url in reviewed_parents:
+                    continue
                 if directory and not links:
                     receipts.append({"url": fetched.url, "status": "official_link_missing", "attempts": 0, "bytes": 0})
                 for href in links:
@@ -371,7 +396,7 @@ class CompetitionScreener:
                                      if not pair.split('=', 1)[0].lower().startswith('utm_'))
                     attachment = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
                     explicit_official = href in parser.official_links or (directory and href in parser.attachments + external_rule_links)
-                    if not allowed_url(attachment, self.hosts):
+                    if not allowed_url(attachment, hosts):
                         if explicit_official:
                             receipts.append({"url": attachment, "status": "official_link_not_allowed", "attempts": 0, "bytes": 0, "required_for_rules": True})
                         continue
@@ -411,6 +436,7 @@ class CompetitionScreener:
             }
         if blocked_official:
             candidate.competition["verification_error"] = "official_content_unavailable"
+            candidate.competition["decision"] = "pending"
         reference = None
         if self.exchange_reference and any((money(candidate.competition.get('facts', {}).get(key, {}).get('value')) or {}).get('currency') == 'USD'
                                            for key in ('prize', 'registration_amount')):
@@ -422,7 +448,7 @@ class CompetitionScreener:
         candidate.category = "ai_competition"
         context_receipts = self._receipt_context.get()
         candidate.competition["fetch_report"] = list(context_receipts if context_receipts is not None else self.last_report)
-        if any(row['status'] != 'ok' for row in candidate.competition['fetch_report']):
+        if any(row['status'] != 'ok' and row.get('role') != 'discovery_only' for row in candidate.competition['fetch_report']):
             candidate.competition['blockers'].append('部分規則頁未取得，完整限制待核對')
             if candidate.competition.get('decision') == 'eligible':
                 candidate.competition['decision'] = 'pending'
@@ -503,6 +529,10 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         if not permission or denial:
             facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
             diagnostics['ai_policy'] = 'missing_explicit_ai_creation_permission'
+
+    if ai['value'] in {'prohibited', 'limited'} and re.search(r'\b(?:fully|entirely|100\s*%)\s+AI[- ](?:produced|generated)', ai['quote'], re.I) and not re.search(r'in whole or part|any AI|all AI|no AI', ai['quote'], re.I):
+        facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
+        diagnostics['ai_policy'] = 'partial_ai_permission_unconfirmed'
 
     if facts['prize_kind']['value'] == 'noncash' and not noncash_only_evidence(facts['prize_kind']['quote']):
         facts['prize_kind'] = {'value': 'unknown', 'quote': '', 'url': ''}
