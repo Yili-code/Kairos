@@ -623,3 +623,21 @@ def test_official_cash_awards_with_amounts_tba_remain_unknown_not_eligible():
     raw['facts']['prize']={'value':'Cash awards TBA','quote':quote,'url':URL}
     report=evaluate(raw,{URL:SOURCES[URL]+' '+quote},now=NOW)
     assert report['facts']['prize']['value']=='unknown' and report['decision']=='pending'
+
+
+def test_actual_itch_imperative_ai_art_creation_permission_is_preserved():
+    quote = 'Build an immersive world with whatever gets you there: AI art, AI audio, coding agents'
+    raw = valid_report()
+    raw['facts']['ai_policy'] = {'value': 'broad_allowed', 'quote': quote, 'url': URL}
+    result = evaluate(raw, {**SOURCES, URL: SOURCES[URL] + ' ' + quote})
+    assert result['facts']['ai_policy']['value'] == 'broad_allowed'
+
+
+def test_imperative_ai_creation_does_not_override_an_explicit_ban_or_api_topic():
+    for quote in ['Do not build an immersive world with AI art.',
+                  'Build an immersive world with AI art. No AI-generated assets are permitted.',
+                  'Build an application that integrates an AI API.']:
+        raw = valid_report()
+        raw['facts']['ai_policy'] = {'value': 'broad_allowed', 'quote': quote, 'url': URL}
+        result = evaluate(raw, {URL: SOURCES[URL] + ' ' + quote})
+        assert result['facts']['ai_policy']['value'] == 'unknown'

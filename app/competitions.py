@@ -481,6 +481,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
             r'(?:creat|generat|produc|cod(?:e|ing)|writ|asset)|'
             r'(?:must be|may be|can be|permitted to be)\s+(?:created|generated|produced).{0,50}(?:using|with).{0,30}(?:AI|artificial intelligence)|'
             r'use any AI tools.{0,80}(?:coding|asset generation|writing)|'
+            r'(?:^|[.!?]\s+)(?:build|create|make|produce)\b.{0,45}\b(?:world|game|film|video|image|artwork|entry|assets)\b.{0,60}\b(?:with|using)\b.{0,70}\b(?:generative AI|AI (?:art|audio|assets|code|images|video))|'
             r'(?:允許|接受|可|得).{0,35}(?:AI|人工智慧|生成式).{0,35}(?:生成|製作|創作)|'
             r'(?:AI|人工智慧|生成式).{0,20}(?:生成|製作|創作).{0,35}(?:允許|接受|可參賽|皆可|得參賽)|'
             r'(?:作品|圖像|影片|程式).{0,30}(?:可|允許).{0,25}(?:生成式|AI)|'
