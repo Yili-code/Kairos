@@ -34,6 +34,11 @@ DIRECTORY_HOSTS = {"aifilmcontests.com"}
 LOGGER = logging.getLogger(__name__)
 
 
+def generic_navigation(title: str) -> bool:
+    return bool(re.fullmatch(r"(?:交流)?競賽(?:[&／/]獎勵)?|比賽(?:徵件)?|徵件(?:資訊|訊息)?|"
+        r"(?:校內|校外)?競賽資訊|活動競賽|contests?|competitions?|awards?", title, re.I))
+
+
 def honor_recap(title: str) -> bool:
     """A completed student award announcement, without a concurrent entry invitation."""
     return bool(HONOR_RECAP_TITLE.search(title) and not OPEN_CALL_TITLE.search(title))
@@ -168,7 +173,7 @@ def entries(body: str, base: str, hosts: tuple[str, ...], *, diagnostics=None, o
         ):
             counts['directory_navigation'] += 1
             continue
-        if re.fullmatch(r"(?:交流)?競賽(?:[&／/]獎勵)?|比賽|徵件|contests?|competitions?|awards?", title, re.I):
+        if generic_navigation(title):
             counts['generic_navigation'] += 1
             continue
         if url.rstrip("/") == base.rstrip("/") or href.startswith("#"):

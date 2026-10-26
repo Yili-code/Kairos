@@ -433,3 +433,12 @@ def test_special_issues_are_filtered_but_explicit_cash_paper_contests_are_retain
     body = '<a href="/issue">淨零減碳與企業永續專刊徵稿</a><a href="/journal">教育學誌徵稿</a><a href="/contest">學術期刊論文競賽徵稿，獎金一萬元</a>'
     rows = entries(body,BASE,HOSTS)
     assert [r.permalink for r in rows] == ['https://campus.edu.tw/contest']
+
+
+def test_real_generic_contest_listing_label_is_not_an_individual_opportunity():
+    body = '<a href="/web/news/news.jsp?dm_no=DM1560757140522">比賽徵件</a>'
+    body += '<a href="/entry">2026 全國大專 AI 比賽徵件</a>'
+    details = {}
+    rows = entries(body, 'https://cart.ntua.edu.tw/', HOSTS, diagnostics=details)
+    assert [row.permalink for row in rows] == ['https://cart.ntua.edu.tw/entry']
+    assert details['excluded']['generic_navigation'] == 1
