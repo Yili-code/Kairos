@@ -192,3 +192,19 @@ def test_ban_on_fully_ai_work_does_not_establish_ban_on_partial_ai():
         result = evaluate({'facts': {'ai_policy': {'value': value, 'quote': quote, 'url': url}}}, {url: quote})
         assert result['facts']['ai_policy']['value'] == 'unknown'
         assert result['decision'] == 'pending'
+
+
+def test_fetch_budget_exhaustion_prevents_partial_source_assessment():
+    class Model:
+        async def screen_competition(self, *args):
+            raise AssertionError('Incomplete fetch must not consume a model call')
+    class SlowSources(CompetitionScreener):
+        async def _read_sources(self, text, sources, receipts):
+            sources.update(SOURCES)
+            await asyncio.sleep(1)
+    async def check():
+        result = await SlowSources(Model(), ('devpost.com',), fetch_timeout=.01).screen(row())
+        assert result.competition['decision'] == 'pending'
+        assert result.competition['verification_error'] == 'official_content_unavailable'
+        assert result.competition['fetch_report'][-1]['required_for_rules']
+    asyncio.run(check())

@@ -319,7 +319,7 @@ class CompetitionScreener:
         try:
             await asyncio.wait_for(self._read_sources(text, sources, receipts), timeout=self.fetch_timeout)
         except TimeoutError:
-            receipts.append({'url': '', 'status': 'fetch_budget_exhausted', 'attempts': 0, 'bytes': 0})
+            receipts.append({'url': '', 'status': 'fetch_budget_exhausted', 'attempts': 0, 'bytes': 0, 'required_for_rules': True})
         return sources
 
     async def _read_sources(self, text: str, sources: dict[str, str], receipts: list[dict]) -> None:
@@ -339,7 +339,7 @@ class CompetitionScreener:
             for url in pending:
                 remaining_text = MAX_TOTAL_RULE_TEXT - sum(len(page) for page in sources.values())
                 if remaining_text <= 0:
-                    receipts.append({'url': url, 'status': 'text_budget_exhausted', 'attempts': 0, 'bytes': 0})
+                    receipts.append({'url': url, 'status': 'text_budget_exhausted', 'attempts': 0, 'bytes': 0, 'required_for_rules': True})
                     break
                 fetched = await self.fetcher(client, url, lambda target: allowed_url(target, hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
