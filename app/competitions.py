@@ -20,7 +20,7 @@ from app.models import Candidate
 from app.public_fetch import fetch_public
 from app.discovery_feeds import devpost_listing_url
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context, concrete_cash_prize
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context, concrete_cash_prize, noncash_only_evidence
 from app.profile import PROFILE
 from app.competition_policy import COMPETITION_POLICY
 from app.economics import economic_review, money
@@ -55,6 +55,12 @@ RULE_LINK = re.compile(
 
 DIRECTORY_RULE_HOSTS = {"contestwatchers.com", "www.contestwatchers.com", "graphiccompetitions.com", "www.graphiccompetitions.com", "aifilmcontests.com", "www.aifilmcontests.com"}
 OFFICIAL_LINK_LABEL = re.compile(r"^(?:visit\s+)?official\s+(?:website|rules|competition\s+(?:website|page))$|^(?:比賽|競賽|活動)?(?:官方網站|官網)$|^(?:完整|比賽|競賽|徵件)簡章$", re.I)
+
+
+def event_catalogue_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return ((parsed.hostname or '').removeprefix('www.') == 'curiousrefuge.com'
+            and parsed.path.rstrip('/') == '/ai-filmmaking-competitions')
 
 
 class PageText(HTMLParser):
@@ -325,6 +331,10 @@ class CompetitionScreener:
                 receipts.append(receipt)
                 if fetched.status != "ok":
                     continue
+                if event_catalogue_url(fetched.url):
+                    receipt['role'] = 'event_catalogue'
+                    receipts.append({'url': fetched.url, 'status': 'event_specific_rules_required', 'attempts': 0, 'bytes': 0})
+                    continue
                 if "application/pdf" in fetched.content_type:
                     page = pdf_text(fetched.body)
                     receipt["status"] = "ok" if page else "pdf_no_text"
@@ -419,7 +429,7 @@ class CompetitionScreener:
                 candidate.competition['rank'] = min(candidate.competition.get('rank', 45), 63)
         candidate.competition['source_hashes'] = hashes
         if candidate.competition.get('decision') == 'pending':
-            hard_failure = any(row['status'] in {'http_403', 'http_404', 'unsupported', 'redirect_blocked', 'official_link_missing', 'official_link_not_allowed'} for row in candidate.competition['fetch_report'])
+            hard_failure = any(row['status'] in {'http_403', 'http_404', 'unsupported', 'redirect_blocked', 'official_link_missing', 'official_link_not_allowed', 'event_specific_rules_required'} for row in candidate.competition['fetch_report'])
             insufficient = bool(sources and not candidate.competition.get('analysis_error'))
             candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=24 if hard_failure or insufficient else 4)).isoformat()
         campus = candidate.search_term.startswith("announcement:")
@@ -494,6 +504,10 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
             facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
             diagnostics['ai_policy'] = 'missing_explicit_ai_creation_permission'
 
+    if facts['prize_kind']['value'] == 'noncash' and not noncash_only_evidence(facts['prize_kind']['quote']):
+        facts['prize_kind'] = {'value': 'unknown', 'quote': '', 'url': ''}
+        diagnostics['prize_kind'] = 'noncash_only_not_established'
+
     if facts['prize']['value'] != 'unknown' and not concrete_cash_prize(facts['prize']['value']):
         facts['prize'] = {'value': 'unknown', 'quote': '', 'url': ''}
         diagnostics['prize'] = 'missing_concrete_cash_amount'
@@ -506,6 +520,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         facts['registration_amount'] = {'value': 'unknown', 'quote': '', 'url': ''}
     if diagnostics['deadline'] != 'invalid_or_unmatched_quote' or raw_facts.get('deadline', {}).get('value') in (None, '', 'unknown'):
         facts['deadline'], diagnostics['deadline'] = resolve_deadline(facts['deadline'], sources)
+    eligibility_basis = dict(facts['eligibility'])
     facts['eligibility'], eligibility_issue = validate_eligibility(facts['eligibility'], PROFILE)
     if eligibility_issue:
         diagnostics['eligibility'] = eligibility_issue
@@ -540,6 +555,8 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         return facts[name]["value"]
 
     blockers, rejected = [], []
+    if eligibility_issue in {"affiliation_requires_confirmation", "ineligibility_not_verified_from_profile"}:
+        blockers.append("規則要求的個人／組織資格尚未核實，未將未知背景視為不符合")
     if any(TRUNCATED_MARKER in page for page in sources.values()):
         blockers.append("規則頁面過長而截斷，完整條款尚未核對")
     if value("ai_policy") in {"limited", "prohibited"}:
@@ -650,6 +667,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         blockers.append("時間／AI 分工／工具計畫仍有不確定性")
     decision = "rejected" if rejected else "pending" if blockers else "eligible"
     questions = {
+        'eligibility': '是否具備官方規則要求的學籍、國籍、會員或組織授權資格？',
         'attendance': '入圍、答辯及頒獎是否全程免實體出席？',
         'publicity': '參賽者本人可否公開展示作品及得獎紀錄？',
         'rights': '著作權是否保留，須授予哪些使用權、多久、是否專屬？',
@@ -666,6 +684,7 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         "decision": decision, "rank": rank, "blockers": rejected + blockers,
         "facts": facts, "sources": list(sources),
         "decision_conditions": conditions,
+        "eligibility_requirements": [eligibility_basis] if eligibility_issue in {"affiliation_requires_confirmation", "ineligibility_not_verified_from_profile"} else [],
         'fact_diagnostics': diagnostics,
         "checked_at": now.isoformat(),
         "context_hash": evaluation_context(PROFILE),

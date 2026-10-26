@@ -214,7 +214,7 @@ class Workflow:
                     for receipt in candidate.competition.get('fetch_report', [])
                     if receipt.get('status') in {'http_403', 'http_429'}}
                 if (not has_sources or verification_error) and any(receipt.get('status') in {
-                        'official_link_missing', 'official_link_not_allowed', 'dynamic_rules_unavailable',
+                        'official_link_missing', 'official_link_not_allowed', 'event_specific_rules_required', 'dynamic_rules_unavailable',
                         'too_large', 'unsupported', 'redirect_blocked'}
                         for receipt in candidate.competition.get('fetch_report', [])):
                     denied_origins.add(origin)

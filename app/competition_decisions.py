@@ -21,6 +21,17 @@ MONTHS['sept'] = 9
 CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
+def noncash_only_evidence(quote):
+    if not isinstance(quote, str):
+        return False
+    return bool(re.search(
+        r'\b(?:all\s+)?(?:prizes?|awards?|rewards?)\s+(?:are|is)\s+(?:(?:entirely|exclusively)\s+)?non[- ]?cash\b|'
+        r'\bonly\s+non[- ]?cash\s+(?:prizes?|awards?|rewards?)\b|'
+        r'\bno\s+cash\s+(?:prizes?|awards?|rewards?)(?:\s+(?:are|is|will be)\s+(?:offered|awarded|provided|available))?\s*(?:[.!;]|$)|'
+        r'(?:獎項|獎勵|獎品)(?:均|全|皆)(?:為|是)非現金|'
+        r'(?:無|沒有|不提供)(?:任何)?現金(?:獎金|獎勵)\s*(?:[，。；]|$)', quote, re.I))
+
+
 def concrete_cash_prize(value):
     if not isinstance(value, str) or re.search(r'\b(?:TBA|TBD|unknown|undetermined)\b|待(?:公[布佈]|公告|確認)|未(?:公[布佈]|公告|確認|定)|另行公[布佈]', value, re.I):
         return False
@@ -239,17 +250,30 @@ def resolve_deadline(fact, sources):
 
 
 def validate_eligibility(fact, profile):
-    if fact['value'] != 'eligible':
+    if fact['value'] not in {'eligible', 'ineligible'}:
         return fact, None
     quote = fact['quote']
+    school = profile.get('education', {}).get('school', '')
+    if 'NTOU' in school:
+        other = r'(?:陽明交大|陽明交通大學|NYCU|National Yang Ming Chiao Tung University|清華大學|NTHU|淡江大學|Tamkang University)'
+        restriction = r'(?:(?<!不)限|僅限|只限|(?<!not )\bonly\b|(?<!not )restricted to|(?<!not )limited to)'
+        students = r'.{0,14}(?:在校學生|在學學生|師生|學生及|students|staff)'
+        closed_scope = (re.search(restriction + r'.{0,40}' + other + students, quote, re.I)
+            or re.search(r'(?:參賽資格|參賽對象|Eligibility)\s*[：:｜|]?\s*' + other + students, quote, re.I))
+        if closed_scope:
+            if re.search(r'(?:及|或|以及|與|and|or)\s*(?:在職)?(?:教職員|職員|校友|staff|employees|alumni)', quote, re.I):
+                return {**fact, 'value': 'unknown'}, 'affiliation_requires_confirmation'
+            if re.search(r'不限學校|不限校別|其他學校|任何學校|all universities|any university|everyone may enter|anyone may enter', quote, re.I):
+                return {**fact, 'value': 'unknown'}, 'institution_scope_requires_confirmation'
+            return {**fact, 'value': 'ineligible'}, 'restricted_to_other_institution'
+    if re.search(r'AWS Partner Network|APN Terms|who\s+(?:are|must be)\s+(?:employed by|authorized to act on behalf)|'
+                 r'must be (?:a |an )?(?:member|employee|partner) of', quote, re.I):
+        return {**fact, 'value': 'unknown'}, 'affiliation_requires_confirmation'
+    if fact['value'] == 'ineligible':
+        return {**fact, 'value': 'unknown'}, 'ineligibility_not_verified_from_profile'
     positive = re.search(r'不限|皆可|參賽資格|參賽對象|在學學生|大專.{0,8}學生|open to|may enter|can enter|eligible (?:entrants|participants)|eligible to enter|individual artists|individuals|everyone|anyone',quote,re.I)
     if not positive:
         return {**fact,'value':'unknown'},'missing_positive_eligibility_evidence'
-    school = profile.get('education',{}).get('school','')
-    if 'NTOU' in school:
-        other = r'(?:陽明交大|陽明交通大學|NYCU|National Yang Ming Chiao Tung University|清華大學|NTHU|淡江大學|Tamkang University)'
-        if re.search(other+r'.{0,14}(?:在校學生|在學學生|師生|學生及|students|staff)',quote,re.I):
-            return {**fact,'value':'ineligible'},'restricted_to_other_institution'
     if re.search(r'限本校|本校在學|全校師生',quote) and not re.search(r'不限學校|不限校別',quote):
         return {**fact,'value':'unknown'},'institution_scope_requires_confirmation'
     unrestricted = re.search(r'(?:不限|任何|所有).{0,8}國籍|all nationalities|regardless of (?:nationality|citizenship)',quote,re.I)

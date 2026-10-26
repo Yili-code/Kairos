@@ -124,3 +124,22 @@ def test_actual_graphic_competitions_official_label_retains_decorative_arrow():
     parser = PageText(base_url="https://graphiccompetitions.com/example/")
     parser.feed('<a href="https://www.klphotoawards.com">Visit official website<span>↗</span></a>')
     assert parser.official_links == ["https://www.klphotoawards.com"]
+
+
+def test_actual_mixed_event_catalogue_cannot_supply_a_different_contests_prize():
+    url = 'https://curiousrefuge.com/ai-filmmaking-competitions'
+    html = '<h2>AI Film Trailer Competition</h2><p>The winner takes home an Apple Vision Pro!</p><h2>Holiday Competition</h2><p>Earn cash prizes!</p>'
+    class Model:
+        async def screen_competition(self, candidate, sources):
+            raise AssertionError('Do not mix rewards from different event cards')
+    def handler(request):return httpx.Response(200, headers={'content-type':'text/html'}, text=html)
+    async def check():
+        screener = CompetitionScreener(Model(), ('curiousrefuge.com',), transport=httpx.MockTransport(handler))
+        candidate = Candidate('catalogue', 'office', '2026 AI Holiday Film Competition ' + url, url, '', 'announcement:test')
+        result = await screener.screen(candidate)
+        assert result.competition['decision'] == 'pending'
+        assert result.competition['sources'] == []
+        assert any(r['status'] == 'event_specific_rules_required' for r in result.competition['fetch_report'])
+        single = await screener.sources('https://curiousrefuge.com/ai-film-trailer-competition')
+        assert single
+    asyncio.run(check())

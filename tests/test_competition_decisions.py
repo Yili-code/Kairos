@@ -44,7 +44,7 @@ def test_unrelated_country_exclusions_do_not_establish_a_positive_eligibility_gr
 def test_model_cannot_mark_another_universitys_closed_call_eligible():
     fact={'value':'eligible','quote':'參賽資格｜陽明交大在校學生及在職教職員，個人或團隊皆可。','url':NYCU}
     result,reason=validate_eligibility(fact,PROFILE)
-    assert result['value']=='ineligible' and reason=='restricted_to_other_institution'
+    assert result['value']=='unknown' and reason=='affiliation_requires_confirmation'
 
 
 def test_residence_is_not_citizenship_and_unrestricted_entry_is_preserved():

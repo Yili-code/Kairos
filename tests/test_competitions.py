@@ -56,6 +56,11 @@ def test_hard_conflicts_are_rejected(key, value):
     raw = valid_report()
     raw["facts"][key]["value"] = value
     sources = SOURCES
+    if key in {"eligibility", "prize_kind"}:
+        quote = ("Only National Yang Ming Chiao Tung University students may enter this competition."
+                 if key == "eligibility" else "All prizes are non-cash.")
+        raw["facts"][key].update(quote=quote, url=URL)
+        sources = {URL: QUOTE + ' ' + quote}
     if key == "deadline":
         quote = QUOTE.replace("2026-12-01 23:59", "2026-10-01 08:00")
         for fact in raw["facts"].values():
