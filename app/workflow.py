@@ -671,8 +671,13 @@ class Workflow:
                     or not competition_card_gaps(candidate.competition)):
                 candidate.screen_failure_streak = 0
             if candidate.competition.get("decision") == "rejected":
-                candidate.status = Status.SKIPPED
-                self.repository.save(candidate)
+                if previous['status'] == Status.TELEGRAM_SENT:
+                    if not self.repository.save_refresh(candidate, previous):
+                        await self.telegram.notify('資料已被更新，請查看目前卡片後再決定是否重新查核。')
+                        return True
+                else:
+                    candidate.status = Status.SKIPPED
+                    self.repository.save(candidate)
                 await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
                 return True
             gaps = competition_card_gaps(candidate.competition)
@@ -685,6 +690,25 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                     self.repository.save(candidate)
                 await self.telegram.notify('資料不足，已留待補查：' + '、'.join(gaps))
+                return True
+            if previous['status'] == Status.TELEGRAM_SENT and previous.get('telegram_message_id'):
+                # An explicit recheck updates its existing card; it is not a resend request.
+                candidate.competition['update_pending'] = True
+                candidate.competition['refresh_failure_streak'] = 1
+                candidate.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                if not self.repository.save_refresh(candidate, previous):
+                    await self.telegram.notify('資料已被更新，請查看目前卡片後再決定是否重新查核。')
+                    return True
+                expected = candidate.to_dict()
+                try:
+                    await self.telegram.send_competition(candidate, edit=True)
+                except Exception:
+                    await self.telegram.notify('原卡更新尚未確認；保留原訊息，不會另發一張卡。')
+                    return True
+                candidate.competition['update_pending'] = False
+                candidate.competition['refresh_failure_streak'] = 0
+                candidate.competition['refresh_retry_after'] = ''
+                self.repository.save_refresh(candidate, expected)
                 return True
             candidate.status = Status.DISCOVERED
             candidate.card_attempts = 0
