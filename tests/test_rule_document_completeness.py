@@ -74,3 +74,15 @@ def test_official_rule_navigation_is_retained_while_navigation_copy_is_excluded(
     sources = asyncio.run(screener.sources("https://postmeaning.art/rules"))
     assert set(sources) == {"https://postmeaning.art/rules", "https://postmeaning.art/timeline", "https://postmeaning.art/terms"}
     assert "Navigation only" not in sources["https://postmeaning.art/rules"]
+
+
+def test_event_footer_terms_are_retained_without_importing_external_site_boilerplate():
+    calls = []
+    def response(request):
+        calls.append(str(request.url))
+        body = "<main>Event rules</main><footer><a href='/terms'>Terms</a><a href='https://info.devpost.com/legal/terms-of-service'>Platform terms</a></footer>"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+    screener = CompetitionScreener(None, ("postmeaning.art", "devpost.com"), transport=httpx.MockTransport(response))
+    sources = asyncio.run(screener.sources("https://postmeaning.art/rules"))
+    assert calls == ["https://postmeaning.art/rules", "https://postmeaning.art/terms"]
+    assert len(sources) == 2 and all('Platform terms' not in value for value in sources.values())

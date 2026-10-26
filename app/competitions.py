@@ -52,8 +52,10 @@ RULE_LINK = re.compile(
 
 
 class PageText(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, base_url: str = '') -> None:
         super().__init__()
+        self.base_url = base_url
+        self.footer = 0
         self.hidden = 0
         self.navigation = 0
         self.parts: list[str] = []
@@ -63,8 +65,16 @@ class PageText(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "nav":
             self.navigation += 1
-        if tag == "a" and not self.hidden:
-            href = dict(attrs).get("href") or ""
+        if tag == "footer":
+            self.footer += 1
+        href = dict(attrs).get("href") or ""
+        footer_rule = False
+        if tag == "a" and self.footer and self.hidden == self.footer and self.base_url and RULE_LINK.search(href):
+            try:
+                footer_rule = urlsplit(urljoin(self.base_url, href)).hostname == urlsplit(self.base_url).hostname
+            except ValueError:
+                pass
+        if tag == "a" and (not self.hidden or footer_rule):
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
             elif RULE_LINK.search(href):
@@ -73,6 +83,8 @@ class PageText(HTMLParser):
             self.hidden += 1
 
     def handle_endtag(self, tag):
+        if tag == "footer" and self.footer:
+            self.footer -= 1
         if tag == "nav" and self.navigation:
             self.navigation -= 1
         if tag in {"script", "style", "noscript", "footer"} and self.hidden:
@@ -286,7 +298,7 @@ class CompetitionScreener:
                         limit = min(MAX_RULE_TEXT, remaining_text)
                         sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                     continue
-                parser = PageText()
+                parser = PageText(base_url=fetched.url)
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
                 dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
