@@ -23,3 +23,7 @@ A failed refresh retains the previous assessment and message receipt. It cannot 
 ## AI permission provenance
 
 A live-model replay selected a PayPal clause requiring an application to integrate an AI tool as evidence of broad AI artifact-creation permission. The evaluator now requires explicit creation/generation permission or an explicitly permitted AI-generated/assisted entry. A product's AI topic, required API, or model integration alone stays unknown. Positive component-specific permissions remain usable, while a sourced prohibition cannot be upgraded by an erroneous model enum. This check does not infer permission from silence, override other qualification gates, or establish a probability of winning.
+
+## Owner policy update — 2026-10-26
+
+The owner explicitly removed the six-hour and NT$300 hard limits. Time and cash costs must be compared with potential return using multiple hourly-value scenarios; none is an asserted personal wage. AI production at least 50%, source/qualification evidence and real deadline feasibility remain required. Current recommendation tiers must not label an opportunity high merely because it is cheap or quick. Without supported success-probability evidence, the economic recommendation remains ungraded. Break-even probability is a decision threshold, never a claimed chance of winning. This section supersedes historical effort/tool-cap tier rules above.

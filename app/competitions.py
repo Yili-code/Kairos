@@ -22,6 +22,7 @@ from app.discovery_feeds import devpost_listing_url
 from app.config import DEFAULT_COMPETITION_COMPANIONS
 from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
 from app.profile import PROFILE
+from app.competition_policy import COMPETITION_POLICY
 
 
 FACTS = {
@@ -366,7 +367,7 @@ class CompetitionScreener:
         candidate.first_round_score = candidate.competition.get("rank", 40)
         if campus and candidate.competition["decision"] != "rejected":
             candidate.first_round_score += 3
-        candidate.reasons = ["獎金與公開得獎紀錄導向", "六小時完整參賽流程與 NT$300 工具預算"]
+        candidate.reasons = ["獎金與公開得獎紀錄導向", "依完整成本與預期回報評估；成功率不足時保留未知"]
         candidate.risks = candidate.competition["blockers"]
         return candidate
 
@@ -567,18 +568,14 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
     estimate_conflicts = blockers if uncertain else rejected
     if total is None or total <= 0:
         blockers.append("完整耗時無法估算")
-    elif total > 6:
-        estimate_conflicts.append("預估完整參賽流程超過六小時" + ("，製作計畫尚待核實" if uncertain else ""))
     elif deadline and deadline.tzinfo and (deadline - now).total_seconds() < total * 3600:
         estimate_conflicts.append("距離截止時間不足以完成預估流程")
     if share is None:
         blockers.append("AI 可完成比例無法估算")
-    elif share < 0.5:
+    elif share < COMPETITION_POLICY['min_ai_production_share']:
         estimate_conflicts.append("預估 AI 可完成比例低於 50%" + ("，分工尚待核實" if uncertain else ""))
     if tools is None:
         blockers.append("額外工具費無法估算")
-    elif tools > 300:
-        estimate_conflicts.append("預估額外工具費超過 NT$300" + ("，工具計畫尚待核實" if uncertain else ""))
     if not plan or uncertain:
         blockers.append("時間／AI 分工／工具計畫仍有不確定性")
     decision = "rejected" if rejected else "pending" if blockers else "eligible"
@@ -671,7 +668,10 @@ is its own component with ai_fraction=0; never let AI draft it. Use 'none' for w
 ai_share will be recomputed as sum(weight * ai_fraction), never trusted as a standalone percentage.
 If the production division or tool availability is unknown return an empty component list and uncertain=true.
 extra_tools_twd is per-contest incremental tool expense in TWD, excluding registration fees.
-Never estimate probability of winning.
+There is no fixed six-hour or NT$300 tool-cost ceiling. Estimate the complete realistic work and expenses,
+then compare return scenarios; never shrink or inflate an estimate to fit an old ceiling.
+Do not invent a probability of winning, infer it from registration counts, or assume positive expected value.
+No personal hourly wage is established; illustrative time-value scenarios are comparisons only.
 uncertain=true if duration, quota, dependencies or finalist work cannot be bounded. Unknown numeric estimates
 are null. Estimates are estimates, never measured performance or organizer promises.
 Write plan and descriptive facts in Traditional Chinese. Enum values must use the exact English enums.

@@ -10,6 +10,7 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
+from app.competition_policy import COMPETITION_POLICY
 
 
 UNKNOWN = {'value': 'unknown', 'quote': '', 'url': ''}
@@ -53,7 +54,7 @@ def competition_card_gaps(report, *, now=None):
 
 
 def evaluation_context(profile):
-    return hashlib.sha256(json.dumps({'profile': profile, 'policy': 'ai50-hours6-tools300-v1'},
+    return hashlib.sha256(json.dumps({'profile': profile, 'policy': COMPETITION_POLICY},
                                      sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

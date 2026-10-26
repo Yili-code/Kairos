@@ -48,7 +48,7 @@ def test_screenshot_regression_is_compact_for_new_cards_and_updates(edit):
                       '待補：', '決策前先確認', '另有 ', '是否值得投入'):
         assert forbidden not in text
     assert '2026/12/15 24:00' in text and '報名費：未確認' in text
-    assert '\n待確認\n推薦程度：低｜目前工時估算偏高\n' in text
+    assert '\n待確認\n推薦程度：暫不評級\n' in text
     assert '尚未確認適合投入' not in text
     assert '流程估算：製作 9h · 檢查／交件 3h' in text
     assert '後續0h' not in text and '生成等待6h' not in text

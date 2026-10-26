@@ -42,12 +42,8 @@ def competition_recommendation(report: dict) -> str:
     hours = number('total_hours', positive=True)
     share = number('ai_share', upper=1)
     cost = number('extra_tools_twd')
-    if hours is not None and hours > 6:
-        return '低｜目前工時估算偏高'
     if share is not None and share < .5:
         return '低｜預估 AI 製作比例偏低'
-    if cost is not None and cost > 300:
-        return '低｜預估工具費偏高'
     facts = report.get('facts', {})
     fee = facts.get('registration_fee', {}).get('value')
     attendance = facts.get('attendance', {}).get('value')
@@ -55,7 +51,7 @@ def competition_recommendation(report: dict) -> str:
             or any(value is None for value in (hours, share, cost))
             or fee not in {'free', 'paid'} or attendance not in {'none', 'online_final'}):
         return '暫不評級'
-    return '高' if fee == 'free' and attendance == 'none' else '中'
+    return '暫不評級｜成功率資料不足'
 
 
 class TelegramRejected(RuntimeError):
