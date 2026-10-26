@@ -80,7 +80,7 @@ def test_manual_evidenced_review_can_recover_a_paused_item_without_resetting_his
     assert run_immediate(workflow.handle_text('/competition ' + URL))
     current = repo.get(row.id)
     assert current.screen_failure_streak == 0
-    assert current.screen_attempts == 3
+    assert current.screen_attempts == 4
     assert current.status == Status.TELEGRAM_SENT
 
 

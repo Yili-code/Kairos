@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import re
 import time
 import uuid
@@ -132,7 +133,7 @@ class Workflow:
             existing = recover_empty_assessment(self.repository.get(candidate.id))
             if existing and existing.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                 return
-            candidate = existing or candidate
+            candidate = deepcopy(existing or candidate)
             apply_score(candidate)
             if candidate.search_term.startswith("announcement:"):
                 candidate.category = "ai_competition"
@@ -166,6 +167,8 @@ class Workflow:
                 candidate = self.repository.claim_for_screen(candidate.id)
                 if not candidate:
                     return
+                expected_screen = candidate.to_dict()
+                candidate = deepcopy(candidate)
                 attempted_competitions.add(candidate.id)
                 competition_attempts += 1
                 screen_retries += int(candidate.screen_attempts > 1 or bool(candidate.competition.get("fetch_report")))
@@ -199,7 +202,8 @@ class Workflow:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
                 if candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}:
                     candidate.screen_failure_streak = 0
-                self.repository.save(candidate)
+                if not self.repository.save_screen_result(candidate, expected_screen):
+                    return
                 completed = candidate.status not in {Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING}
                 screen_completed += int(completed)
                 completed_pending += int(completed and decision == 'pending')
@@ -235,7 +239,6 @@ class Workflow:
                 except (ValueError, TypeError):
                     continue
             # Provider I/O may overlap an owner decision or a newer assessment.
-            from copy import deepcopy
             delivered = deepcopy(delivered)
             expected = delivered.to_dict()
             # Persist the attempt before provider/edit I/O, including process interruption.
@@ -662,11 +665,29 @@ class Workflow:
             if candidate and candidate.status in {Status.TELEGRAM_SENDING, Status.TELEGRAM_UNCERTAIN}:
                 await self.telegram.notify("前次卡片送達結果尚未確認，請先檢查 Telegram，避免重複發送。")
                 return True
-            candidate = candidate or Candidate(candidate_id, "organizer", url, url, "", "/competition")
-            from copy import deepcopy
+            if not candidate:
+                candidate = Candidate(candidate_id, "organizer", url, url, "", "/competition",
+                    category='ai_competition', status=Status.COMPETITION_PENDING_SCREEN)
+                self.repository.create_if_absent(candidate)
+                candidate = self.repository.get(candidate_id)
+            if candidate.status != Status.TELEGRAM_SENT:
+                candidate = self.repository.claim_for_screen(candidate_id, manual=True)
+                if not candidate:
+                    await self.telegram.notify('這筆活動正在查核或處理通知，請稍後查看結果。')
+                    return True
             candidate = deepcopy(candidate)
             previous = candidate.to_dict()
-            await self.competition_screener.screen(candidate)
+            try:
+                await self.competition_screener.screen(candidate)
+            except Exception:
+                if previous['status'] == Status.COMPETITION_SCREENING:
+                    candidate = Candidate.from_dict(deepcopy(previous))
+                    candidate.status = Status.COMPETITION_PENDING_SCREEN
+                    candidate.competition['analysis_error'] = 'manual_review_failed'
+                    candidate.competition['retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+                    self.repository.save_screen_result(candidate, previous)
+                await self.telegram.notify('本次查核未完成，已保留進度；不會發送機會卡或自動重送。')
+                return True
             if (candidate.competition.get('decision') == 'rejected'
                     or not competition_card_gaps(candidate.competition)):
                 candidate.screen_failure_streak = 0
@@ -677,7 +698,9 @@ class Workflow:
                         return True
                 else:
                     candidate.status = Status.SKIPPED
-                    self.repository.save(candidate)
+                    if not self.repository.save_screen_result(candidate, previous):
+                        await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                        return True
                 await self.telegram.notify("此競賽不符條件：\n" + "\n".join(candidate.risks))
                 return True
             gaps = competition_card_gaps(candidate.competition)
@@ -688,7 +711,9 @@ class Workflow:
                     self.repository.save_refresh(candidate, previous)
                 else:
                     candidate.status = Status.COMPETITION_PENDING_SCREEN
-                    self.repository.save(candidate)
+                    if not self.repository.save_screen_result(candidate, previous):
+                        await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                        return True
                 await self.telegram.notify('資料不足，已留待補查：' + '、'.join(gaps))
                 return True
             if previous['status'] == Status.TELEGRAM_SENT and previous.get('telegram_message_id'):
@@ -714,7 +739,9 @@ class Workflow:
             candidate.card_attempts = 0
             candidate.card_retry_after = ''
             candidate.card_last_error = ''
-            self.repository.save(candidate)
+            if not self.repository.save_screen_result(candidate, previous):
+                await self.telegram.notify('資料已被更新，已保留較新的結果。')
+                return True
             await self._deliver_card(candidate.id)
             return True
         waiting = self.repository.find_by_status([Status.QUESTIONNAIRE, Status.DRAFT_READY], limit=20)

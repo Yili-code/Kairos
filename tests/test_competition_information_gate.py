@@ -86,7 +86,7 @@ def test_manual_incomplete_review_stays_background_and_does_not_rearm_failed_bud
     assert run_immediate(workflow.handle_text('/competition ' + URL))
     assert telegram.cards == []
     assert repo.get(key).status == Status.COMPETITION_PENDING_SCREEN
-    assert repo.get(key).screen_failure_streak == 3
+    assert repo.get(key).screen_failure_streak == 4
     assert telegram.notifications == ['資料不足，已留待補查：現金獎金、有效截止時間、交付內容、AI 規則、完整投入估算']
     assert run_immediate(workflow._deliver_card(key)) == 'incomplete'
     assert repo.get(key).card_attempts == 0
