@@ -18,6 +18,7 @@ import httpx
 
 from app.models import Candidate
 from app.public_fetch import fetch_public
+from app.discovery_feeds import devpost_listing_url
 from app.config import DEFAULT_COMPETITION_COMPANIONS
 from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
 from app.profile import PROFILE
@@ -184,7 +185,7 @@ def allowed_url(url: str, hosts: tuple[str, ...]) -> bool:
             and not parsed.username and not parsed.password
             and any(host == item or host.endswith("." + item) for item in hosts)
             and unique_query and len(parsed.query) < 500
-            and (public_navigation or public_module or public_attachment) and not parsed.fragment
+            and (public_navigation or public_module or public_attachment or devpost_listing_url(url)) and not parsed.fragment
         )
     except ValueError:
         return False

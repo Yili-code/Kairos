@@ -1,0 +1,24 @@
+{
+  "hackathons": [
+    {
+      "title": "Nebius x NVIDIA Global AI Hackathon",
+      "url": "https://nebiusglobalaihackathon.devpost.com/",
+      "open_state": "open"
+    },
+    {
+      "title": "PayPal AI Hackathon",
+      "url": "https://paypalaihackathon.devpost.com/",
+      "open_state": "open"
+    },
+    {
+      "title": "Code for Humanity",
+      "url": "https://code-for-humanity.devpost.com/",
+      "open_state": "open"
+    }
+  ],
+  "meta": {
+    "total_count": 52,
+    "per_page": 20,
+    "fuzzy": false
+  }
+}
