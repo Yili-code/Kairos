@@ -205,10 +205,12 @@ class Workflow:
                 has_sources = bool(candidate.competition.get('sources'))
                 analysis_error = candidate.competition.get('analysis_error')
                 verification_error = candidate.competition.get('verification_error')
-                report['assessment_completed'] = bool(has_sources and not analysis_error and not verification_error)
+                platform_closed = candidate.competition.get('assessment_method') == 'platform_submission_state'
+                report['assessment_method'] = 'platform_submission_state' if platform_closed else 'model'
+                report['assessment_completed'] = bool(has_sources and not analysis_error and not verification_error and not platform_closed)
                 report['last_successful_step'] = ('assessment' if report['assessment_completed'] else
                     'announcement_fetch' if has_sources and verification_error else 'official_fetch' if has_sources else 'claim')
-                report['stop_reason'] = (analysis_error or ('official_content_unavailable' if not has_sources or verification_error else
+                report['stop_reason'] = ('platform_submission_closed' if platform_closed else analysis_error or ('official_content_unavailable' if not has_sources or verification_error else
                     'awaiting_information' if candidate.competition.get('decision') == 'pending' else 'terminal_decision'))
                 denied_origins = {urlsplit(receipt.get('url', '')).netloc.lower()
                     for receipt in candidate.competition.get('fetch_report', [])
@@ -222,7 +224,7 @@ class Workflow:
                     origin_denials[denied] = origin_denials.get(denied, 0) + 1
                 model_rate_limited = candidate.competition.get('analysis_error') == 'model_rate_limited'
                 rule_fetch_errors += sum(row.get('status') != 'ok' for row in candidate.competition.get('fetch_report', []))
-                if candidate.competition.get("sources") and not verification_error:
+                if candidate.competition.get("sources") and not verification_error and not platform_closed:
                     screened += 1
                 decision = candidate.competition.get("decision", "pending")
                 competition_decisions[decision] = competition_decisions.get(decision, 0) + 1
@@ -230,7 +232,7 @@ class Workflow:
                 facts = candidate.competition.get("facts", {})
                 if not candidate.competition.get("sources"):
                     competition_source_errors += 1
-                if not any(fact.get("quote") for fact in facts.values()):
+                if not platform_closed and not any(fact.get("quote") for fact in facts.values()):
                     competition_errors += 1
                     competition_model_errors += bool(candidate.competition.get('analysis_error'))
                     competition_info_insufficient += bool(candidate.competition.get('sources') and not candidate.competition.get('analysis_error'))
@@ -485,6 +487,7 @@ class Workflow:
             'screen_waiting_information': sum(row.get('result_saved') and row.get('stop_reason') == 'awaiting_information' for row in screen_reports),
             'screen_external_blocked': sum(row.get('result_saved') and row.get('stop_reason') == 'official_content_unavailable' for row in screen_reports),
             'screen_result_conflicts': sum(row.get('stop_reason') == 'snapshot_conflict' for row in screen_reports),
+            'screen_platform_closed': sum(row.get('result_saved') and row.get('stop_reason') == 'platform_submission_closed' for row in screen_reports),
             'screen_model_calls': sum(row.get('model_calls', 0) for row in screen_reports),
             'screen_fetch_requests': sum(row.get('fetch_requests', 0) for row in screen_reports),
             'screen_attempts': competition_attempts,
