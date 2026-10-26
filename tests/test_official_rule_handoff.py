@@ -97,3 +97,24 @@ def test_missing_dynamic_official_rules_do_not_spend_model_budget_on_parent_summ
         assert result.competition["fetch_report"][-1]["required_for_rules"]
     asyncio.run(check())
     assert requests == [campus, official]
+
+
+def test_directory_official_pdf_handoff_remains_readable(monkeypatch):
+    official = "https://sample.devpost.com/entry-rules.pdf"
+    monkeypatch.setattr("app.competitions.pdf_text", lambda body: next(iter(SOURCES.values())))
+    class Model:
+        async def screen_competition(self, candidate, sources):
+            assert list(sources) == [official]
+            raw = valid_report()
+            for fact in raw["facts"].values():fact["url"] = official
+            return raw
+    def handler(request):
+        if str(request.url) == DIRECTORY:
+            return httpx.Response(200, headers={"content-type": "text/html"}, text='<a href="' + official + '">Download rules</a>')
+        return httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"controlled PDF adapter")
+    async def check():
+        screener = CompetitionScreener(Model(), ("contestwatchers.com", "devpost.com"), transport=httpx.MockTransport(handler))
+        result = await screener.screen(row())
+        assert result.competition["decision"] == "eligible"
+        assert result.competition["fetch_report"][-1]["required_for_rules"]
+    asyncio.run(check())

@@ -347,7 +347,10 @@ class CompetitionScreener:
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
                     (i for i, name in enumerate(("rules", "regulations", "terms", "timeline", "application", "enter", "guidelines", "faq", "judging"))
                      if re.search(r"(?:/|-)" + name + r"(?:[-/.?#]|$)", href, re.I)), 99))
-                links = parser.official_links if directory else parser.attachments + parser.official_links + rule_links
+                external_rule_links = [href for href in rule_links
+                    if urlsplit(urljoin(fetched.url, href)).hostname not in DIRECTORY_RULE_HOSTS]
+                links = (parser.attachments + parser.official_links + external_rule_links if directory
+                    else parser.attachments + parser.official_links + rule_links)
                 if directory and not links:
                     receipts.append({"url": fetched.url, "status": "official_link_missing", "attempts": 0, "bytes": 0})
                 for href in links:
@@ -357,7 +360,7 @@ class CompetitionScreener:
                     query = '&'.join(pair for pair in parsed.query.split('&')
                                      if not pair.split('=', 1)[0].lower().startswith('utm_'))
                     attachment = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
-                    explicit_official = href in parser.official_links
+                    explicit_official = href in parser.official_links or (directory and href in parser.attachments + external_rule_links)
                     if not allowed_url(attachment, self.hosts):
                         if explicit_official:
                             receipts.append({"url": attachment, "status": "official_link_not_allowed", "attempts": 0, "bytes": 0, "required_for_rules": True})
