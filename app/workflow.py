@@ -262,6 +262,7 @@ class Workflow:
                     else:
                         await self.competition_screener.screen(delivered)
                     screened += bool(delivered.competition.get('sources'))
+                    model_rate_limited = model_rate_limited or delivered.competition.get('analysis_error') == 'model_rate_limited'
                     gaps = competition_card_gaps(delivered.competition)
                     if gaps:
                         diagnostics = {key: delivered.competition.get(key) for key in
