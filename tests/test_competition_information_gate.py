@@ -140,3 +140,9 @@ def test_legacy_incomplete_queued_edit_is_deferred_and_bounded_without_provider_
     assert saved.competition['refresh_incomplete_attempts'] == 3
     assert saved.competition['update_pending'] is True
     assert saved.status == Status.TELEGRAM_SENT
+
+
+@pytest.mark.parametrize('value', ['Cash awards TBA', '現金獎金待公告', 'USD 0', '2026 cash awards'])
+def test_unannounced_or_zero_awards_do_not_pass_the_information_gate(value):
+    report=complete();report['facts']['prize']['value']=value
+    assert '現金獎金' in competition_card_gaps(report)

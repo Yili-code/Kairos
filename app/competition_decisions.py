@@ -20,6 +20,21 @@ MONTHS = {name.lower(): number for number in range(1,13)
 CLOSING = re.compile(r'截止|期限|마감|(?:自公告日|即日)起至|deadline|entries\s+close|submissions?\s+(?:close|due)', re.I)
 
 
+def concrete_cash_prize(value):
+    if not isinstance(value, str) or re.search(r'\b(?:TBA|TBD|unknown|undetermined)\b|待(?:公[布佈]|公告|確認)|未(?:公[布佈]|公告|確認|定)|另行公[布佈]', value, re.I):
+        return False
+    currency = r'NT\$|US\$|[$€£¥₹₩]|USD|TWD|NTD|AUD|CAD|EUR|GBP|JPY|KRW|CNY|SGD|HKD|新[臺台]幣|美元|韓元|歐元|日圓|人民幣|元'
+    number = r'(\d[\d,]*(?:\.\d+)?)'
+    for match in re.finditer(rf'(?:{currency})\s*{number}|{number}\s*[萬万千百億]?\s*(?:{currency})', value, re.I):
+        try:
+            amount = float((match[1] or match[2]).replace(',', ''))
+            if math.isfinite(amount) and amount > 0:
+                return True
+        except (ValueError, OverflowError):
+            pass
+    return bool(re.search(r'(?:新[臺台]幣|美元|韓元|歐元|日圓|人民幣)[一二三四五六七八九十百千萬億]+元', value))
+
+
 def competition_card_gaps(report, *, now=None):
     """Minimum useful card content; quotation provenance was validated by evaluation."""
     facts, sources = report.get('facts', {}), report.get('sources', [])
@@ -28,7 +43,8 @@ def competition_card_gaps(report, *, now=None):
         fact = facts.get(key, {})
         return bool(isinstance(fact.get('value'), str) and fact['value'] not in {'', 'unknown'} and fact.get('quote')
                     and fact.get('url') in sources)
-    if not grounded('prize') or not grounded('prize_kind') or facts['prize_kind']['value'] != 'cash':
+    if (not grounded('prize') or not concrete_cash_prize(facts.get('prize', {}).get('value'))
+            or not grounded('prize_kind') or facts['prize_kind']['value'] != 'cash'):
         missing.append('現金獎金')
     try:
         closing = datetime.fromisoformat(facts.get('deadline', {}).get('value', '').replace('Z', '+00:00'))

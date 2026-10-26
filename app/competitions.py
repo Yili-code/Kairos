@@ -20,7 +20,7 @@ from app.models import Candidate
 from app.public_fetch import fetch_public
 from app.discovery_feeds import devpost_listing_url
 from app.config import DEFAULT_COMPETITION_COMPANIONS
-from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context
+from app.competition_decisions import resolve_deadline, validate_eligibility, recover_explicit_rights, explicit_decision_conditions, evaluation_context, concrete_cash_prize
 from app.profile import PROFILE
 from app.competition_policy import COMPETITION_POLICY
 from app.economics import economic_review, money
@@ -438,6 +438,10 @@ def evaluate(raw: dict, sources: dict[str, str], *, now: datetime | None = None)
         if not permission or denial:
             facts['ai_policy'] = {'value': 'unknown', 'quote': '', 'url': ''}
             diagnostics['ai_policy'] = 'missing_explicit_ai_creation_permission'
+
+    if facts['prize']['value'] != 'unknown' and not concrete_cash_prize(facts['prize']['value']):
+        facts['prize'] = {'value': 'unknown', 'quote': '', 'url': ''}
+        diagnostics['prize'] = 'missing_concrete_cash_amount'
 
     fee = facts['registration_fee']
     if fee['value'] == 'free' and not re.search(r'免費|免.{0,4}報名費|不收費|無須繳費|entry is free|free (?:entry|registration)|no (?:entry|registration) fee|no purchase (?:is )?necessary|no (?:purchase or payment|payment or purchase) (?:is )?(?:necessary|required) to (?:enter|win|participate)', fee['quote'], re.I):

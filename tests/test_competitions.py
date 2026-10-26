@@ -616,3 +616,10 @@ def test_elapsed_work_still_must_fit_before_actual_deadline():
     report = evaluate(raw, SOURCES, now=datetime(2026, 12, 1, 22, 0, tzinfo=timezone(timedelta(hours=8))))
     assert report['decision'] == 'rejected'
     assert '距離截止時間不足以完成預估流程' in report['blockers']
+
+
+def test_official_cash_awards_with_amounts_tba_remain_unknown_not_eligible():
+    raw=valid_report();quote='There will be cash prizes. Award amounts are TBA.'
+    raw['facts']['prize']={'value':'Cash awards TBA','quote':quote,'url':URL}
+    report=evaluate(raw,{URL:SOURCES[URL]+' '+quote},now=NOW)
+    assert report['facts']['prize']['value']=='unknown' and report['decision']=='pending'
