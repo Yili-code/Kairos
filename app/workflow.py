@@ -16,7 +16,7 @@ from app.profile import PROFILE
 from app.llm import GeminiClient
 from app.models import Candidate, Status
 from app.scoring import apply_score
-from app.storage import Repository, card_claimable
+from app.storage import Repository, card_claimable, screen_claimable
 from app.telegram import TelegramClient, TelegramRejected, CompetitionCardIncomplete
 from app.threads_client import ThreadsClient, ThreadsUnavailable
 
@@ -350,9 +350,9 @@ class Workflow:
 
         # Persist discovered leads before allocating any remaining model work. One fresh
         # candidate gets an early turn; the rest retain last-attempt order with old work.
-        backlog_existing = self.repository.find_by_status(
-            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        backlog_before = len(backlog_existing)
+        backlog_existing = self.repository.screen_work_page(limit=500)
+        backlog_before = self.repository.count_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING])
         if self.announcement_source:
             try:
                 leads, announcement_errors = await self.announcement_source.discover()
@@ -381,7 +381,8 @@ class Workflow:
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
             if row.id not in existing_ids]
         for candidate in backlog:
-            await ingest(candidate)
+            if screen_claimable(candidate):
+                await ingest(candidate)
         for term_index, term in enumerate(terms):
             if time.monotonic() > deadline - 40:
                 deferred_terms = len(terms) - term_index
@@ -450,7 +451,8 @@ class Workflow:
             card_errors += outcome == 'failed'
         remaining = self.repository.find_by_status(
             [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING], limit=500)
-        from app.storage import screen_claimable
+        remaining_total = self.repository.count_by_status(
+            [Status.COMPETITION_PENDING_SCREEN, Status.COMPETITION_SCREENING])
         due_rows = [item for item in remaining if screen_claimable(item)]
         attention = sum(item.screen_failure_streak >= 3 for item in remaining)
         now = datetime.now(UTC)
@@ -498,9 +500,10 @@ class Workflow:
             'screen_oldest_due_age_seconds': max((age_seconds(item) for item in due_rows), default=0),
             'screen_oldest_pending_created_at': min((item.created_at for item in remaining), default=''),
             'screen_queue_before': backlog_before,
-            'screen_queue_after': len(remaining),
+            'screen_selection_window_size': len(backlog_existing),
+            'screen_queue_after': remaining_total,
             'screen_queue_due': sum(screen_claimable(item) for item in remaining),
-            'screen_queue_sample_saturated': int(len(remaining) >= 500),
+            'screen_queue_sample_saturated': int(remaining_total > len(remaining)),
             'announcement_source_report': getattr(self.announcement_source, 'last_report', []),
             'candidate_errors': candidate_errors,
             'competition_rule_fetch_errors': rule_fetch_errors,
