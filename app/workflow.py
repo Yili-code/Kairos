@@ -224,7 +224,8 @@ class Workflow:
                         and not delivered.competition.get('update_pending')
                         and not delivered.competition.get('information_gaps'))):
                 continue
-            if delivered.competition.get('refresh_incomplete_attempts', 0) >= 3:
+            if (delivered.competition.get('refresh_incomplete_attempts', 0) >= 3
+                    or delivered.competition.get('refresh_failure_streak', 0) >= 3):
                 continue
             retry_at = delivered.competition.get('refresh_retry_after')
             if retry_at:
@@ -236,6 +237,13 @@ class Workflow:
             # Provider I/O may overlap an owner decision or a newer assessment.
             from copy import deepcopy
             delivered = deepcopy(delivered)
+            expected = delivered.to_dict()
+            # Persist the attempt before provider/edit I/O, including process interruption.
+            streak = delivered.competition.get('refresh_failure_streak', 0) + 1
+            delivered.competition['refresh_failure_streak'] = streak
+            delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+            if not self.repository.save_refresh(delivered, expected):
+                continue
             expected = delivered.to_dict()
             try:
                 if delivered.competition.get('update_pending') and competition_card_gaps(delivered.competition):
@@ -253,13 +261,18 @@ class Workflow:
                     screened += bool(delivered.competition.get('sources'))
                     gaps = competition_card_gaps(delivered.competition)
                     if gaps:
+                        diagnostics = {key: delivered.competition.get(key) for key in
+                            ('checked_at', 'analysis_error', 'fetch_report', 'sources', 'fact_diagnostics')}
                         delivered = Candidate.from_dict(deepcopy(expected))
+                        delivered.competition['last_refresh_diagnostics'] = diagnostics
                         delivered.competition['information_gaps'] = gaps
                         delivered.competition['refresh_incomplete_attempts'] = delivered.competition.get('refresh_incomplete_attempts', 0) + 1
                         delivered.competition['refresh_retry_after'] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
                         self.repository.save_refresh(delivered, expected)
                         update_errors += 1
                         break
+                    delivered.competition['refresh_failure_streak'] = streak
+                    delivered.competition['refresh_retry_after'] = expected['competition']['refresh_retry_after']
                     delivered.competition['update_pending'] = True
                     if not self.repository.save_refresh(delivered, expected):
                         continue
@@ -267,9 +280,17 @@ class Workflow:
                 # Repeating an edit of the same message is safe after a lost acknowledgement.
                 await self.telegram.send_competition(delivered, edit=True)
                 delivered.competition['update_pending'] = False
+                delivered.competition['refresh_failure_streak'] = 0
+                delivered.competition['refresh_retry_after'] = ''
+                delivered.competition['refresh_last_error'] = ''
                 self.repository.save_refresh(delivered, expected)
                 updates_sent += 1
-            except Exception:
+            except Exception as exc:
+                # Restore the last committed snapshot; exception text may contain credentials.
+                delivered = Candidate.from_dict(deepcopy(expected))
+                delivered.competition['refresh_last_error'] = (
+                    'telegram_rejected' if isinstance(exc, TelegramRejected) else 'refresh_failed')
+                self.repository.save_refresh(delivered, expected)
                 update_errors += 1
             break
 
@@ -389,6 +410,10 @@ class Workflow:
             'stale_sent_remaining': sum(item.status == Status.TELEGRAM_SENT and item.category == 'ai_competition'
                 and (not assessment_current(item.competition, PROFILE) or bool(item.competition.get('update_pending'))
                      or bool(item.competition.get('information_gaps')))
+                for item in notification_rows),
+            'card_refresh_attention_remaining': sum(item.status == Status.TELEGRAM_SENT
+                and (item.competition.get('refresh_failure_streak', 0) >= 3
+                     or item.competition.get('refresh_incomplete_attempts', 0) >= 3)
                 for item in notification_rows),
             'card_updates_sent': updates_sent,
             'card_update_errors': update_errors,

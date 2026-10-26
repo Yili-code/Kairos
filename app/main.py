@@ -96,6 +96,9 @@ def create_app(settings: Settings | None = None, workflow: Workflow | None = Non
             state['screen_attention'] = [{'id': row.id, 'url': row.permalink,
                 'attempts': row.screen_failure_streak, 'last_assessment': row.competition.get('checked_at'),
                 'analysis_error': row.competition.get('analysis_error')} for row in attention[:10]]
+            state['card_refresh_attention_remaining'] = sum(row.status == 'telegram_sent'
+                and (row.competition.get('refresh_failure_streak', 0) >= 3
+                     or row.competition.get('refresh_incomplete_attempts', 0) >= 3) for row in rows)
             state['stale_sent_assessments'] = sum(row.status == 'telegram_sent' and row.category == 'ai_competition'
                 and (not assessment_current(row.competition, PROFILE) or bool(row.competition.get('information_gaps'))) for row in rows)
         return state
