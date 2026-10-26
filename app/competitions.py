@@ -43,6 +43,8 @@ FACTS = {
 EFFORT_STAGES = ("planning", "generation_wait", "review", "submission", "finals")
 TRUNCATED_MARKER = "[Kairos: source truncated; full rules unverified]"
 MAX_RULE_DOCUMENTS = 6
+MAX_RULE_TEXT = 48_000
+MAX_TOTAL_RULE_TEXT = 192_000
 RULE_LINK = re.compile(
     r"/(?:[a-z0-9]+-)*(?:rules|regulations|terms|timeline|application|enter|faq|guidelines|judging)(?:[-/.?#]|$)",
     re.I,
@@ -53,26 +55,31 @@ class PageText(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.hidden = 0
+        self.navigation = 0
         self.parts: list[str] = []
         self.attachments: list[str] = []
         self.rule_links: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "a":
+        if tag == "nav":
+            self.navigation += 1
+        if tag == "a" and not self.hidden:
             href = dict(attrs).get("href") or ""
             if ".pdf" in href.lower() or "Action=downloadfile" in href or "Action=mobileads" in href:
                 self.attachments.append(href)
             elif RULE_LINK.search(href):
                 self.rule_links.append(href)
-        if tag in {"script", "style", "noscript"}:
+        if tag in {"script", "style", "noscript", "footer"}:
             self.hidden += 1
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style", "noscript"} and self.hidden:
+        if tag == "nav" and self.navigation:
+            self.navigation -= 1
+        if tag in {"script", "style", "noscript", "footer"} and self.hidden:
             self.hidden -= 1
 
     def handle_data(self, data):
-        if not self.hidden and data.strip():
+        if not self.hidden and not self.navigation and data.strip():
             self.parts.append(data.strip())
 
 
@@ -224,7 +231,7 @@ def pdf_text(body: bytes) -> str:
                 return TRUNCATED_MARKER
             parts.append(page.extract_text() or "")
             if sum(len(part) for part in parts) > 32_000:
-                return normalize(" ".join(parts))[:32_000] + "\n" + TRUNCATED_MARKER
+                return normalize(" ".join(parts))[:MAX_RULE_TEXT] + "\n" + TRUNCATED_MARKER
         return normalize(" ".join(parts))
     except Exception:
         # Malformed, encrypted or image-only documents never become positive evidence.
@@ -262,6 +269,10 @@ class CompetitionScreener:
             timeout=12.0, follow_redirects=False, transport=self.transport, trust_env=False,
         ) as client:
             for url in pending:
+                remaining_text = MAX_TOTAL_RULE_TEXT - sum(len(page) for page in sources.values())
+                if remaining_text <= 0:
+                    receipts.append({'url': url, 'status': 'text_budget_exhausted', 'attempts': 0, 'bytes': 0})
+                    break
                 fetched = await self.fetcher(client, url, lambda target: allowed_url(target, self.hosts))
                 receipt = {"url": url, "resolved_url": fetched.url, "status": fetched.status,
                            "attempts": fetched.attempts, "bytes": len(fetched.body)}
@@ -272,14 +283,18 @@ class CompetitionScreener:
                     page = pdf_text(fetched.body)
                     receipt["status"] = "ok" if page else "pdf_no_text"
                     if page:
-                        sources[fetched.url] = page
+                        limit = min(MAX_RULE_TEXT, remaining_text)
+                        sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                     continue
                 parser = PageText()
                 parser.feed(fetched.text())
                 page = normalize(" ".join(parser.parts))
-                receipt["status"] = "ok" if page else "empty_text"
-                if page:
-                    sources[fetched.url] = page[:32_000] + ("\n" + TRUNCATED_MARKER if len(page) > 32_000 else "")
+                dynamic_shell = (len(page) < 160 and '<script' in fetched.text().lower()
+                    and re.search(r"<(?:div|main)[^>]*id=[\"'](?:app|root|__next)[\"'][^>]*>\s*</", fetched.text(), re.I))
+                receipt["status"] = "dynamic_rules_unavailable" if dynamic_shell else "ok" if page else "empty_text"
+                if page and not dynamic_shell:
+                    limit = min(MAX_RULE_TEXT, remaining_text)
+                    sources[fetched.url] = page[:limit] + ("\n" + TRUNCATED_MARKER if len(page) > limit else "")
                 rule_links = sorted(parser.rule_links, key=lambda href: next(
                     (i for i, name in enumerate(("rules", "regulations", "terms", "timeline", "application", "enter", "guidelines", "faq", "judging"))
                      if re.search(r"(?:/|-)" + name + r"(?:[-/.?#]|$)", href, re.I)), 99))

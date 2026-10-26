@@ -50,3 +50,11 @@ Devpost 清單使用網站自己引用的公開 JSON 端點；僅允許精確的
 SVAIFF 的目錄目前連向新聞轉述，未提供可直接採用的官方連結；加入官方網域不代表已完成自動發現。Cue 官方網頁是動態頁面，取得連結也不代表完整規則可讀。這些缺口須保留，不能算作已完成查核或已合格推薦。現有來源的 403、429 與來源內未讀頁面仍可能造成漏收。上述樣本不是全網涵蓋率的估計。
 
 Regression fixtures 位於 tests/fixtures/discovery，來自 2026-10-26 官方公開清單／RSS 與既有目錄的精簡欄位。tests/test_discovery_regressions.py 同時驗證格式故障隔離、嚴格查詢、兩頁上限與輪替。實際部署和自然排程證據須獨立記錄。
+
+## Official-rule completeness repair
+
+Read-only comparison across software, games, films and art exposed a second failure after discovery: PayPal and Nebius have about 36–37k characters of page text, so the former 32k per-document cut always marked their official rules incomplete. HTML navigation/footer links also pulled unrelated platform pages into the six-document review budget.
+
+The extractor now ignores navigation text and footer content/links, while retaining rule-navigation links and rules-body references (including explicitly incorporated platform terms). A document can retain 48k characters; the aggregate text budget remains bounded at 192k across at most six documents. Any real truncation or exhausted text budget remains a verification blocker. Complete rule retrieval does not itself establish qualification, effort feasibility or a recommendation.
+
+A JavaScript-only shell with an empty root and only short title text is marked dynamic_rules_unavailable and does not consume a model call as if rules had been read. It stays pending with its fetch receipt; no browser challenge is bypassed, and no organizer is contacted.
